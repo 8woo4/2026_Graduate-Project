@@ -109,10 +109,10 @@ httpServer.listen(PORT, () => {
         //    같은 앱키를 나눠 쓰면 양쪽 다 유량 초과로 실패한다.
         //    로컬 수집 + 수급 백필이 끝나면 아래 다섯 줄을 모두 되살릴 것.
         startStockPriceScheduler()            // 일봉        평일 16:00
-        //startShortSellingScheduler()          // 공매도      평일 16:20
-        //startForeignAndInstitutionalScheduler() // 수급      평일 17:35
+        startShortSellingScheduler()          // 공매도      평일 16:20
+        startForeignAndInstitutionalScheduler() // 수급      평일 17:35
         //startMinuteCandleScheduler()          // 분봉        평일 08:00 / 19:20
-        //startListedSharesScheduler()          // 상장주식수  매주 월 07:00 (KIS)
+        startListedSharesScheduler()          // 상장주식수  매주 월 07:00 (KIS)
 
         // 외부 API — KIS 와 무관
         startMarketIndexScheduler()             // 미국지수    평일 18:00 (Yahoo)
@@ -126,7 +126,7 @@ httpServer.listen(PORT, () => {
         // 모의투자 체결 장부 고정 — 배포 서버 한 곳에서만(로컬이 공유 DB 에 고정 기록을 남기지 않게)
         startLedgerAnchorScheduler()            // 체결 장부   매일 00:10
 
-        //startStabilityScheduler() //안정성 계산 — AI 피처에 쓰이지 않아 보류
+        startStabilityScheduler() //안정성 계산 — AI 피처에 쓰이지 않아 보류
     }
 
     // 실시간 시세 (온디맨드 폴링 항상 활성, 전종목 크롤링은 ENABLE_FULL_CRAWL=true 필요)

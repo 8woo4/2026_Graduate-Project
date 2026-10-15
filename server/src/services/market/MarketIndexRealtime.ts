@@ -186,7 +186,7 @@ const fetchAndEmitUsIndices = async (io: Server): Promise<void> => {
         if (result) {
             indexCache[result.code] = result  // 캐시 저장
             io.emit('index:price', result)
-            console.log(`[MarketIndex] ${index.name}: ${result.price} (${result.changeRate}%)`)
+            //console.log(`[MarketIndex] ${index.name}: ${result.price} (${result.changeRate}%)`)
         }
         await new Promise((r) => setTimeout(r, 500))
     }
