@@ -227,7 +227,7 @@ export default function Login() {
                 onChange={(e) => setHoneypot(e.target.value)}
                 style={{ display: 'none' }}
                 tabIndex={-1}
-                autoComplete="off" // TODO: 최신 브라우저 정책(자동완성 강제)으로 인해 기능 임시 보류
+                autoComplete="off" /* 허니팟 보호 — 비밀번호 관리자가 미끼 필드를 채워 정상 사용자가 봇으로 오탐되는 것 방지 */
               />
               
               <div>
@@ -241,11 +241,8 @@ export default function Login() {
                   placeholder="비밀번호를 입력하세요" 
                   value={password} 
                   onChange={(e) => setPassword(e.target.value)} 
-                  onKeyDown={(e) => e.key === 'Enter' && handleLoginStep1()} 
-                  style={inputStyle} 
-                  autoComplete="new-password" // TODO: 최신 브라우저 정책(자동완성 강제)으로 인해 기능 임시 보류
-                  readOnly={true}
-                  onFocus={(e) => e.target.removeAttribute('readonly')}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLoginStep1()}
+                  style={inputStyle}
                   onCopy={(e) => { e.preventDefault(); alert("보안상 복사할 수 없습니다."); }}
                   onPaste={(e) => { e.preventDefault(); alert("보안상 붙여넣기를 지원하지 않습니다. 직접 입력해주세요."); }}
                 />
