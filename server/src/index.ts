@@ -15,6 +15,7 @@ import contractTestRouter from './routes/auth/contractTestRouter'
 import honeypotRouter from './routes/security/honeypotRouter'
 import { deviceIdMiddleware } from './middleware/security/deviceIdMiddleware'
 import adminRouter from './routes/security/adminRouter'
+import securityReportRouter from './routes/security/securityReportRouter'
 import { ipBlockMiddleware } from './middleware/security/ipBlockMiddleware'
 import virtualTradeRouter from './routes/trade/virtualTradeRouter'
 import tradePinRouter from './routes/trade/tradePinRouter'
@@ -70,6 +71,7 @@ app.use('/api', deviceIdMiddleware) // 단말 식별 쿠키 — 1인 1계정 감
 // 라우터
 app.use('/api/auth', authRouter)
 app.use('/api/admin/security', adminRouter)
+app.use('/api/security', securityReportRouter)
 app.use('/api/test', contractTestRouter)
 // 거래 PIN 은 모의투자·실거래 공용이라 어느 한쪽 라우터에도 두지 않는다.
 app.use('/api/trade/pin', tradePinRouter)

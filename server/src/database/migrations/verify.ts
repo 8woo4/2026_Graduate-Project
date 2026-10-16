@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   )
   const types = (col?.COLUMN_TYPE ?? '').replace(/^enum\(|\)$/g, '').split(',').map((s) => s.replace(/'/g, ''))
   console.log(`anomaly_type ENUM ${types.length}종: ${types.join(', ')}`)
-  for (const required of ['ABNORMAL_TRADE_AMOUNT', 'ADVERSARIAL_INPUT', 'INFERENCE_ABUSE', 'MULTI_ACCOUNT_DEVICE', 'LEDGER_TAMPERING', 'SPOOFING_ORDER', 'WASH_TRADE', 'BOT_TRADE_BEHAVIOR', 'BEHAVIOR_BIOMETRIC_MISMATCH', 'DEVICE_FINGERPRINT_MISMATCH']) {
+  for (const required of ['ABNORMAL_TRADE_AMOUNT', 'ADVERSARIAL_INPUT', 'INFERENCE_ABUSE', 'MULTI_ACCOUNT_DEVICE', 'LEDGER_TAMPERING', 'SPOOFING_ORDER', 'WASH_TRADE', 'BOT_TRADE_BEHAVIOR', 'BEHAVIOR_BIOMETRIC_MISMATCH', 'DEVICE_FINGERPRINT_MISMATCH', 'PRIVILEGE_ESCALATION']) {
     console.log(`  ${types.includes(required) ? 'OK  ' : 'MISS'} ${required}`)
   }
 

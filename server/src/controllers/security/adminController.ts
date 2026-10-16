@@ -9,6 +9,7 @@ import sequelize from '../../config/database'
 import LedgerAnchor from '../../models/trade/LedgerAnchor'
 import { accountDisplay, accountLoginKey } from '../../utils/loginIdentifier'
 import { isLedgerOnChain, isValidDayKey, verifyDay } from '../../services/web3/ledgerAnchorService'
+import { ESCALATION_DETAIL_PREFIX } from '../../services/auth/privilegeEscalationService'
 
 // 대시보드 요약 통계
 export async function getStats(req: Request, res: Response): Promise<void> {
@@ -16,7 +17,8 @@ export async function getStats(req: Request, res: Response): Promise<void> {
   todayStart.setHours(0, 0, 0, 0)
 
   const [total, today, locked, honeypotHits, integrityViolations, tradeAnomalies, tradeBlocked,
-    multiAccountDevices, multiAccountAlerts, multiAccountBlocked, ledgerAnchored, ledgerTampering] =
+    multiAccountDevices, multiAccountAlerts, multiAccountBlocked, ledgerAnchored, ledgerTampering,
+    escalationApi, escalationRoute] =
     await Promise.all([
       AnomalyLog.count(),
       AnomalyLog.count({ where: { created_at: { [Op.gte]: todayStart } } }),
@@ -47,6 +49,13 @@ export async function getStats(req: Request, res: Response): Promise<void> {
       AnomalyLog.count({ where: { anomaly_type: 'MULTI_ACCOUNT_DEVICE', action: 'BLOCK' } }).catch(() => 0),
       LedgerAnchor.count().catch(() => 0),
       AnomalyLog.count({ where: { anomaly_type: 'LEDGER_TAMPERING' } }).catch(() => 0),
+      // 권한 상승 시도 — 서버 거부(위조 불가)와 화면 진입 보고(관측)를 따로 센다
+      AnomalyLog.count({
+        where: { anomaly_type: 'PRIVILEGE_ESCALATION', detail: { [Op.startsWith]: ESCALATION_DETAIL_PREFIX.API } },
+      }).catch(() => 0),
+      AnomalyLog.count({
+        where: { anomaly_type: 'PRIVILEGE_ESCALATION', detail: { [Op.startsWith]: ESCALATION_DETAIL_PREFIX.CLIENT_ROUTE } },
+      }).catch(() => 0),
     ])
 
   res.json({
@@ -54,6 +63,7 @@ export async function getStats(req: Request, res: Response): Promise<void> {
     honeypotHits, integrityViolations, tradeAnomalies, tradeBlocked,
     multiAccountDevices, multiAccountAlerts, multiAccountBlocked,
     ledgerAnchored, ledgerTampering, ledgerOnChain: isLedgerOnChain(),
+    escalationApi, escalationRoute,
   })
 }
 

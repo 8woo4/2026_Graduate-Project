@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import * as authService from '../../services/auth/authService'
 import User from '../../models/user/User'
+import { recordPrivilegeEscalation } from '../../services/auth/privilegeEscalationService'
+import { getClientIp } from '../../utils/getClientIp'
 
 // 로그인 확인 미들웨어
 export const isAuthenticated = async (
@@ -39,7 +41,20 @@ export const isAdmin = async (
   try {
     const user = (req as any).user
     if (!user) return res.status(401).json({ message: '로그인이 필요합니다' })
-    if (user.role !== 'admin') return res.status(403).json({ message: '관리자 권한이 필요합니다' })
+    if (user.role !== 'admin') {
+      // 응답을 기다리게 하지 않는다 — 거부는 즉시, 기록은 뒤에서
+      void recordPrivilegeEscalation({
+        userId: Number(user.id),
+        email: user.email ?? null,
+        role: String(user.role),
+        ip: getClientIp(req),
+        userAgent: req.headers['user-agent'] ?? null,
+        source: 'API',
+        method: req.method,
+        path: req.originalUrl.split('?')[0].slice(0, 120),
+      }).catch(() => undefined)
+      return res.status(403).json({ message: '관리자 권한이 필요합니다' })
+    }
     next()
   } catch (error) {
     return res.status(403).json({ message: '접근 권한이 없습니다' })

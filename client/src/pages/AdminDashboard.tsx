@@ -39,6 +39,7 @@ const TYPE_META: Record<string, { label: string; color: string }> = {
   BOT_TRADE_BEHAVIOR:  { label: '거래 자동화(관측)',    color: '#283593' },
   BEHAVIOR_BIOMETRIC_MISMATCH: { label: '행동 생체인식 불일치(관측)', color: '#4a148c' },
   DEVICE_FINGERPRINT_MISMATCH: { label: '디바이스 지문 변화(관측)', color: '#311b92' },
+  PRIVILEGE_ESCALATION: { label: '권한 상승 시도', color: '#d50000' },
 }
 
 const ACTION_META: Record<string, { label: string; color: string }> = {
@@ -53,6 +54,7 @@ type Stats = {
   tradeAnomalies: number; tradeBlocked: number
   multiAccountDevices: number; multiAccountAlerts: number; multiAccountBlocked: number
   ledgerAnchored: number; ledgerTampering: number; ledgerOnChain: boolean
+  escalationApi: number; escalationRoute: number
 }
 // 서버(getAnomalyLogs)는 AnomalyLog 행을 통째로 내려준다 — user_id·user_agent 도 온다.
 // 타입에만 빠져 있어 허니팟 표에서 `(h as any).user_agent` 로 우회하고 있었다.
@@ -239,7 +241,13 @@ export default function AdminDashboard() {
             },
             {
               label: '체결 장부 고정(일)', value: stats?.ledgerAnchored ?? '—', color: '#bf360c', icon: '⛓️',
-              note: stats ? `위·변조 경보 ${stats.ledgerTampering}건 · ${stats.ledgerOnChain ? '체인 고정' : 'DB 고정(재배포 전)'}` : '',
+              note: stats ? `위·변조 경보 ${stats.ledgerTampering}건 · ${stats.ledgerOnChain ? '체인 고정' : 'DB 고정'}` : '',
+            },
+            {
+              label: '권한 상승 시도',
+              value: stats ? stats.escalationApi + stats.escalationRoute : '—',
+              color: '#d50000', icon: '🛂',
+              note: stats ? `관리자 API 거부 ${stats.escalationApi}건 · 화면 진입 ${stats.escalationRoute}건` : '',
             },
             { label: '잠긴 계정',    value: stats?.locked ?? '—', color: '#8e24aa', icon: '🔒', note: '' },
             { label: '차단된 IP',    value: stats?.blockedIPs ?? '—', color: '#fb8c00', icon: '🚫', note: '' },

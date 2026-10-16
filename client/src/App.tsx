@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
 import Navbar from './components/Navbar'
 import LandingPage from './pages/LandingPage'
 import StockList from './pages/StockList'
@@ -18,6 +18,7 @@ import fpPromise from '@fingerprintjs/fingerprintjs'
 import Survey from './pages/Survey' 
 import AdminDashboard from './pages/AdminDashboard'
 import { Toaster } from 'react-hot-toast'
+import { API_BASE } from './utils/api'
 
 
 const isLoggedIn = () => document.cookie.split(';').some(c => c.trim().startsWith('isLoggedIn=true'))
@@ -31,8 +32,29 @@ const isAdmin = () => {
   } catch { return false }
 }
 
+// 로그인한 일반 계정이 관리자 화면에 들어오려 하면 서버에 한 번 알린 뒤 돌려보낸다.
+// 화면 가드는 서버를 거치지 않아 그대로 두면 기록이 남지 않는다. 보고는 클라이언트가 보내므로
+// 공격자가 끌 수 있는 관측 신호이고, role 을 조작해 대시보드를 띄운 경우는 서버 isAdmin 이 잡는다.
+const AdminRouteDenied = () => {
+  const location = useLocation()
+  const sent = useRef(false)
+  useEffect(() => {
+    if (sent.current) return
+    sent.current = true
+    fetch(`${API_BASE}/api/security/admin-route-denied`, {
+      method: 'POST',
+      credentials: 'include',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: location.pathname }),
+    }).catch(() => undefined)
+  }, [])
+  return <Navigate to="/" replace />
+}
+
 const AdminRoute = ({ children }: { children: React.ReactNode }) => {
-  if (!isLoggedIn() || !isAdmin()) return <Navigate to="/" replace />
+  if (!isLoggedIn()) return <Navigate to="/" replace />
+  if (!isAdmin()) return <AdminRouteDenied />
   return <>{children}</>
 }
 

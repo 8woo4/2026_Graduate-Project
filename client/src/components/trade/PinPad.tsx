@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { buildPadLayout, CLEAR_KEY, BACKSPACE_KEY } from '../../utils/pinKeypadLayout'
 
 interface Props {
   title: string
@@ -7,19 +8,25 @@ interface Props {
   onCancel: () => void
 }
 
-const KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
+const PIN_LENGTH = 6
 
 export default function PinPad({ title, subtitle, onConfirm, onCancel }: Props) {
   const [pin, setPin] = useState('')
+  // 마운트마다 한 번 섞는다. 호출부가 오류·재시도 때 key 로 재마운트하므로 재입력마다 새 배열이 된다.
+  const [layout] = useState(() => buildPadLayout())
   const submitted = useRef(false)
 
   const handleKey = (k: string) => {
-    if (k === '' || submitted.current) return
-    if (k === '⌫') {
+    if (submitted.current) return
+    if (k === BACKSPACE_KEY) {
       setPin(p => p.slice(0, -1))
       return
     }
-    if (pin.length >= 6) return
+    if (k === CLEAR_KEY) {
+      setPin('')
+      return
+    }
+    if (pin.length >= PIN_LENGTH) return
 
     const next = pin + k
     setPin(next)
@@ -30,13 +37,13 @@ export default function PinPad({ title, subtitle, onConfirm, onCancel }: Props) 
     // 부모가 PinPad 를 key 로 재마운트하는 타이밍과 겹쳤다. StrictMode 의 effect
     // 이중 실행까지 얹히면 제출이 두 번 불리거나 단계 전이가 어긋날 수 있다.
     // 입력 시점에 직접 부르면 그 경로가 통째로 사라진다.
-    if (next.length === 6) {
+    if (next.length === PIN_LENGTH) {
       submitted.current = true
       onConfirm(next)
     }
   }
 
-  // ESC로 닫기
+  // 물리 키보드 숫자 입력은 받지 않는다(키 입력 기록에 PIN 이 남지 않게). ESC 닫기만 허용.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
     window.addEventListener('keydown', handler)
@@ -44,108 +51,87 @@ export default function PinPad({ title, subtitle, onConfirm, onCancel }: Props) 
   }, [])
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 10000,
-      }}
-    >
-      <div
-        style={{
-          backgroundColor: '#fff',
-          borderRadius: '24px',
-          padding: '36px 32px 28px',
-          width: '320px',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.18)',
-          animation: 'pin-slide-up 0.22s cubic-bezier(0.34,1.56,0.64,1)',
-        }}
-      >
-        {/* 타이틀 */}
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <div style={{ fontSize: '16px', fontWeight: '800', color: '#111', marginBottom: '4px' }}>{title}</div>
-          {subtitle && <div style={{ fontSize: '12px', color: '#9ca3af', fontWeight: '500' }}>{subtitle}</div>}
+    <div className="pinpad-scrim" role="presentation">
+      <div className="pinpad-card" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="pinpad-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="pinpad-title">{title}</div>
+            {subtitle && <div className="pinpad-sub">{subtitle}</div>}
+          </div>
+          <button type="button" className="pinpad-close" onClick={onCancel} aria-label="닫기">✕</button>
         </div>
 
-        {/* 도트 인디케이터 */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '14px', marginBottom: '32px' }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: '13px',
-                height: '13px',
-                borderRadius: '50%',
-                backgroundColor: i < pin.length ? '#111' : 'transparent',
-                border: `2px solid ${i < pin.length ? '#111' : '#d1d5db'}`,
-                transition: 'all 0.15s ease',
-                transform: i === pin.length - 1 ? 'scale(1.15)' : 'scale(1)',
-              }}
-            />
+        <div className="pinpad-dots" aria-label={`${pin.length}자리 입력됨`}>
+          {Array.from({ length: PIN_LENGTH }).map((_, i) => (
+            <span key={i} className={i < pin.length ? 'pinpad-dot on' : 'pinpad-dot'} />
           ))}
         </div>
 
-        {/* 숫자 패드 */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
-          {KEYS.map((k, i) => (
+        <div className="pinpad-grid">
+          {layout.map((k, i) => (
             <button
               key={i}
+              type="button"
+              className={k === CLEAR_KEY || k === BACKSPACE_KEY ? 'pinpad-key fn' : 'pinpad-key'}
               onClick={() => handleKey(k)}
-              disabled={k === ''}
-              style={{
-                height: '56px',
-                borderRadius: '14px',
-                border: 'none',
-                backgroundColor: k === '' ? 'transparent' : k === '⌫' ? '#f3f4f6' : '#f9fafb',
-                color: k === '⌫' ? '#6b7280' : '#111',
-                fontSize: k === '⌫' ? '20px' : '20px',
-                fontWeight: k === '⌫' ? '400' : '600',
-                cursor: k === '' ? 'default' : 'pointer',
-                transition: 'all 0.1s',
-                outline: 'none',
-                userSelect: 'none',
-                WebkitTapHighlightColor: 'transparent',
-              }}
-              onMouseDown={e => { if (k !== '') (e.currentTarget.style.backgroundColor = k === '⌫' ? '#e5e7eb' : '#f0fdf4'); (e.currentTarget.style.transform = 'scale(0.94)') }}
-              onMouseUp={e => { if (k !== '') (e.currentTarget.style.backgroundColor = k === '⌫' ? '#f3f4f6' : '#f9fafb'); (e.currentTarget.style.transform = 'scale(1)') }}
-              onMouseLeave={e => { if (k !== '') (e.currentTarget.style.backgroundColor = k === '⌫' ? '#f3f4f6' : '#f9fafb'); (e.currentTarget.style.transform = 'scale(1)') }}
+              aria-label={k === CLEAR_KEY ? '전체 삭제' : k === BACKSPACE_KEY ? '지우기' : k}
             >
-              {k}
+              {k === CLEAR_KEY ? '전체삭제' : k === BACKSPACE_KEY ? '⌫' : k}
             </button>
           ))}
         </div>
 
-        {/* 취소 */}
-        <button
-          onClick={onCancel}
-          style={{
-            width: '100%',
-            padding: '12px',
-            border: 'none',
-            background: 'none',
-            color: '#9ca3af',
-            fontSize: '14px',
-            fontWeight: '600',
-            cursor: 'pointer',
-            borderRadius: '10px',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = '#6b7280')}
-          onMouseLeave={e => (e.currentTarget.style.color = '#9ca3af')}
-        >
-          취소
-        </button>
+        <div className="pinpad-foot">🔒 보안 키패드 · 열 때마다 숫자 배열이 바뀝니다</div>
       </div>
 
       <style>{`
-        @keyframes pin-slide-up {
-          from { opacity: 0; transform: translateY(20px) scale(0.96); }
-          to   { opacity: 1; transform: translateY(0) scale(1); }
+        .pinpad-scrim {
+          position: fixed; inset: 0; z-index: 10000;
+          background: rgba(15, 23, 42, 0.12);
+          display: flex; align-items: flex-end; justify-content: flex-end;
+          padding: 24px;
         }
+        .pinpad-card {
+          width: 272px; background: #fff; border-radius: 18px;
+          padding: 16px 16px 12px;
+          border: 1px solid #e5e7eb;
+          box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+          animation: pinpad-in 0.18s ease-out;
+        }
+        .pinpad-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+        .pinpad-title { font-size: 14px; font-weight: 800; color: #111; }
+        .pinpad-sub { font-size: 11.5px; color: #6b7280; margin-top: 2px; line-height: 1.4; word-break: keep-all; }
+        .pinpad-close {
+          border: none; background: #f3f4f6; color: #6b7280; width: 26px; height: 26px; flex-shrink: 0;
+          border-radius: 8px; font-size: 12px; cursor: pointer;
+        }
+        .pinpad-close:hover { background: #e5e7eb; color: #374151; }
+        .pinpad-dots { display: flex; justify-content: center; gap: 10px; margin-bottom: 14px; }
+        .pinpad-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #d1d5db; transition: all 0.12s; }
+        .pinpad-dot.on { background: #111; border-color: #111; }
+        .pinpad-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .pinpad-key {
+          height: 44px; border: none; border-radius: 10px; background: #f9fafb;
+          color: #111; font-size: 18px; font-weight: 600; cursor: pointer;
+          user-select: none; -webkit-tap-highlight-color: transparent; transition: background 0.1s, transform 0.08s;
+        }
+        .pinpad-key:hover { background: #f0fdf4; }
+        .pinpad-key:active { transform: scale(0.95); background: #dcfce7; }
+        .pinpad-key.fn { background: #f3f4f6; color: #6b7280; font-size: 12px; font-weight: 600; }
+        .pinpad-key.fn:hover { background: #e5e7eb; }
+        .pinpad-key:focus-visible, .pinpad-close:focus-visible { outline: 2px solid #22c55e; outline-offset: 1px; }
+        .pinpad-foot { text-align: center; font-size: 10.5px; color: #9ca3af; margin-top: 10px; }
+        @media (max-width: 640px) {
+          .pinpad-scrim { padding: 0; justify-content: center; }
+          .pinpad-card {
+            width: 100%; max-width: 420px; border-radius: 18px 18px 0 0;
+            padding-bottom: calc(12px + env(safe-area-inset-bottom));
+            animation: pinpad-up 0.2s ease-out;
+          }
+          .pinpad-key { height: 48px; }
+        }
+        @keyframes pinpad-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pinpad-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
       `}</style>
     </div>
   )
