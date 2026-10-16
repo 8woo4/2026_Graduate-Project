@@ -596,7 +596,7 @@ export default function MyPage() {
         setPwMetamaskStep('signing')
 
         const { keccak256, concat, toBytes, getAddress } = await import('viem')
-        const CONTRACT_ADDRESS = '0xe7BBeA01683414DEd829f08e8d6822eF0CD7a38a'
+        const CONTRACT_ADDRESS = '0x2058646be3248D72D21AfB0f888d49f841b7571C'
         const CHAIN_ID = BigInt(11155111)
 
         const innerHash = keccak256(
