@@ -5,6 +5,7 @@ import { io } from 'socket.io-client';
 import { formatStockName } from '../utils/formatStockName';
 
 import { API_BASE, SOCKET_URL } from '../utils/api'
+import { isLoggedIn } from '../utils/session'
 
 interface StockData {
   id: number;
@@ -18,7 +19,6 @@ interface StockData {
   type?: string; // KOSPI | KOSDAQ | ETF
 }
 
-const isLoggedIn = () => document.cookie.split(';').some(c => c.trim().startsWith('isLoggedIn=true'))
 
 const StockList: React.FC = () => {
   const navigate = useNavigate();
@@ -139,7 +139,7 @@ const StockList: React.FC = () => {
   const formatNum = (val: string | number) => Number(val).toLocaleString();
 
   const handleManageClick = () => {
-    const isActuallyLoggedIn = localStorage.getItem('loginTime'); 
+    const isActuallyLoggedIn = isLoggedIn(); 
     
     if (!isActuallyLoggedIn) {
       alert("로그인이 필요한 서비스입니다. 로그인 후 나만의 포트폴리오를 관리해보세요!");

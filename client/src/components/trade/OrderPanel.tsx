@@ -8,6 +8,7 @@ import PinPad from './PinPad'
 import { useBehaviorTracker } from '../../hooks/useBehaviorTracker'
 
 import { API_BASE } from '../../utils/api'
+import { isLoggedIn } from '../../utils/session'
 
 interface Props {
   stockId: number
@@ -18,8 +19,6 @@ interface Props {
 
 type OrderType = 'market' | 'limit'
 type Side = 'buy' | 'sell'
-
-const isLoggedIn = () => document.cookie.split(';').some(c => c.trim().startsWith('isLoggedIn=true'))
 
 export default function OrderPanel({ stockId, stockCode, stockName, currentPrice }: Props) {
   const { mode } = useTradeModeStore()

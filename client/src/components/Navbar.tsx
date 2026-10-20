@@ -4,15 +4,7 @@ import { useTradeModeStore } from '../store/tradeModeStore'
 import { useProfileStore } from '../store/profileStore'
 
 import { API_BASE } from '../utils/api'
-
-const checkLoggedIn = () => document.cookie.split(';').some(c => c.trim().startsWith('isLoggedIn=true'))
-
-const getSessionRemaining = () => {
-  const loginTime = localStorage.getItem('loginTime')
-  if (!loginTime) return 0
-  const elapsed = Math.floor((Date.now() - parseInt(loginTime)) / 1000)
-  return Math.max(0, 600 - elapsed)
-}
+import { clearSession, isLoggedIn as checkLoggedIn, sessionRemaining as getSessionRemaining, SESSION_TTL_SEC } from '../utils/session'
 
 export default function Navbar() {
   const navigate = useNavigate()
@@ -55,11 +47,8 @@ export default function Navbar() {
       if (r <= 0) {
         setLoggedIn(false)
         setShowWarning(false)
-        localStorage.removeItem('loginTime')
+        clearSession()
         resetMode()
-        document.cookie = 'accessToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-        document.cookie = 'refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-        document.cookie = 'isLoggedIn=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
         navigate('/login')
       }
     }
@@ -74,10 +63,7 @@ export default function Navbar() {
       method: 'POST',
       credentials: 'include',
     })
-    document.cookie = 'accessToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-    document.cookie = 'refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-    document.cookie = 'isLoggedIn=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-    localStorage.removeItem('loginTime')
+    clearSession()
     resetMode()
     setLoggedIn(false)
     navigate('/')
@@ -91,7 +77,7 @@ export default function Navbar() {
       })
       if (!res.ok) throw new Error()
       localStorage.setItem('loginTime', Date.now().toString())
-      setRemaining(600)
+      setRemaining(SESSION_TTL_SEC)
       setShowWarning(false)
     } catch {
       handleLogout()

@@ -19,9 +19,7 @@ import Survey from './pages/Survey'
 import AdminDashboard from './pages/AdminDashboard'
 import { Toaster } from 'react-hot-toast'
 import { API_BASE } from './utils/api'
-
-
-const isLoggedIn = () => document.cookie.split(';').some(c => c.trim().startsWith('isLoggedIn=true'))
+import { isLoggedIn } from './utils/session'
 
 // 관리자 전용 화면 가드 — 화면 노출만 막는 1차 방어이고, 실제 권한 검증은
 // 서버의 isAdmin 미들웨어가 담당한다(localStorage 는 사용자가 조작할 수 있음).

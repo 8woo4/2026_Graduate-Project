@@ -7,6 +7,7 @@ import PinPad from '../components/trade/PinPad'
 
 import { API_BASE } from '../utils/api'
 import { signedFetch } from '../utils/tradeSigning'
+import { clearSession } from '../utils/session'
 
 // ─── 실거래 포트폴리오 섹션 ─────────────────────────────────────
 function RealPortfolioSection({ onRegister, refreshKey }: { onRegister: () => void; refreshKey: number }) {
@@ -729,9 +730,7 @@ export default function MyPage() {
       const res = await fetch(`${API}/withdraw`, { method: 'DELETE', credentials: 'include' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.message)
-      document.cookie = 'accessToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-      document.cookie = 'refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-      document.cookie = 'isLoggedIn=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+      clearSession()
       window.location.href = '/'
     } catch (err: any) {
       setWithdrawError(err.message)
