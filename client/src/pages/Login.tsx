@@ -86,6 +86,13 @@ export default function Login() {
         // 서버가 재인증을 요구했다 — 서명 화면으로 넘긴다.
         // (신뢰 기기로 통과하려던 요청이 위험 신호로 승격된 경우)
         if (data.code === 'WALLET_REQUIRED') setStep(2)
+        // 1단계 챌린지가 만료·소진됐다. 서명 화면에 남겨두면 이미 죽은 nonce 로 계속
+        // 서명만 반복하게 되므로(MetaMask 경고까지 매번 다시 통과해야 한다) 1단계로 되돌린다.
+        if (data.code === 'LOGIN_CHALLENGE_REQUIRED') {
+          setLoginData(null)
+          setPassword('')
+          setStep(1)
+        }
         throw new Error(data.message)
       }
 

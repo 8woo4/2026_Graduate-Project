@@ -6,6 +6,7 @@ import {
   isValidDeviceId,
   newDeviceId,
 } from '../../services/auth/deviceIdentityService'
+import { authCookieOptions } from '../../config/cookies'
 
 // 모든 API 요청에 붙인다. 쿠키가 없거나 형식이 틀리면 새로 발급한다.
 //   res.locals.deviceHash  : 이 요청 단말의 HMAC
@@ -19,12 +20,9 @@ export function deviceIdMiddleware(req: Request, res: Response, next: NextFuncti
     if (!isValidDeviceId(raw)) {
       raw = newDeviceId()
       fresh = true
-      res.cookie(DEVICE_ID_COOKIE, raw, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+      res.cookie(DEVICE_ID_COOKIE, raw, authCookieOptions(req, {
         maxAge: DEVICE_ID_MAX_AGE_MS,
-      })
+      }))
     }
     res.locals.deviceHash = hashDeviceId(raw)
     res.locals.deviceFresh = fresh

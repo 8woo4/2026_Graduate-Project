@@ -6,6 +6,7 @@ import { blockIP } from '../security/ipBlockMiddleware'
 import AnomalyLog from '../../models/auth/AnomalyLog'
 import { getClientIp } from '../../utils/getClientIp'
 import { LOGIN_CHALLENGE_COOKIE, LOGIN_CHALLENGE_TTL_MS } from '../../services/auth/loginChallengeService'
+import { authCookieOptions } from '../../config/cookies'
 import {
   assessRisk,
   collectRiskSignals,
@@ -89,15 +90,12 @@ export async function checkAccountLock(
 }
 
 // 1단계 성공 응답에만 2단계 챌린지 쿠키를 싣는다. 차단 응답(403)에는 절대 싣지 않는다.
-function attachLoginChallenge(res: Response): void {
+function attachLoginChallenge(req: Request, res: Response): void {
   const token = res.locals.loginChallenge
   if (!res.locals.loginSuccess || typeof token !== 'string') return
-  res.cookie(LOGIN_CHALLENGE_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+  res.cookie(LOGIN_CHALLENGE_COOKIE, token, authCookieOptions(req, {
     maxAge: LOGIN_CHALLENGE_TTL_MS,
-  })
+  }))
 }
 
 // ─────────────────────────────────────────────
@@ -237,13 +235,13 @@ export async function analyzeAfterLogin(
     }
 
     // 정상 응답
-    attachLoginChallenge(res)
+    attachLoginChallenge(req, res)
     res.status(responseStatus ?? 200).json(responseData)
 
   } catch (err) {
     console.error('[anomalyMiddleware] analyzeAfterLogin error:', err)
     // fail-open — 이상탐지 실패해도 원래 응답은 정상 전송
-    attachLoginChallenge(res)
+    attachLoginChallenge(req, res)
     res.status(responseStatus ?? 200).json(responseData)
   }
 }

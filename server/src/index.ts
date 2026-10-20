@@ -9,9 +9,11 @@ import morgan from 'morgan'
 import { connectDB } from './config/database'
 import { verifyCanaryBindings } from './services/security/canaryService'
 import { corsOptions, socketCorsOptions, describeCorsPolicy } from './config/cors'
+import { describeCookiePolicy } from './config/cookies'
+import { originGuard } from './middleware/security/originGuard'
 import { initUserChannels } from './services/socket/userChannel'
 import authRouter from './routes/auth/authRouter'
-import contractTestRouter from './routes/auth/contractTestRouter'
+import contractTestRouter, { contractTestRoutesEnabled } from './routes/auth/contractTestRouter'
 import honeypotRouter from './routes/security/honeypotRouter'
 import { deviceIdMiddleware } from './middleware/security/deviceIdMiddleware'
 import adminRouter from './routes/security/adminRouter'
@@ -66,13 +68,19 @@ app.use(cors(corsOptions))
 // 보안 미들웨어 — 모든 라우터보다 먼저 실행
 app.use(ipBlockMiddleware)  // 인메모리 IP 차단 목록 검사
 app.use(honeypotRouter)     // 허니팟 경로 탐지
+// 상태 변경 요청의 출처 검사 — 교차 사이트 배포에서 SameSite=Strict 가 하던 CSRF 방어를 대체한다
+app.use('/api', originGuard)
 app.use('/api', deviceIdMiddleware) // 단말 식별 쿠키 — 1인 1계정 감시(다계정 단말 탐지)
 
 // 라우터
 app.use('/api/auth', authRouter)
 app.use('/api/admin/security', adminRouter)
 app.use('/api/security', securityReportRouter)
-app.use('/api/test', contractTestRouter)
+// 온체인 쓰기까지 하는 무인증 점검용 라우터 — 옵트인 없이는 경로 자체를 만들지 않는다
+if (contractTestRoutesEnabled()) {
+    console.warn('[보안] /api/test 점검용 라우터가 켜져 있다 (ENABLE_CONTRACT_TEST_ROUTES=true). 운영 환경에서는 끌 것.')
+    app.use('/api/test', contractTestRouter)
+}
 // 거래 PIN 은 모의투자·실거래 공용이라 어느 한쪽 라우터에도 두지 않는다.
 app.use('/api/trade/pin', tradePinRouter)
 app.use('/api/trade/virtual', virtualTradeRouter)
@@ -92,6 +100,7 @@ connectDB().then(() => verifyCanaryBindings())
 httpServer.listen(PORT, () => {
     console.log(`서버 실행 중 : http://localhost:${PORT}`)
     console.log(describeCorsPolicy())
+    console.log(describeCookiePolicy())
     // ── 시장 데이터 수집 ────────────────────────────────────
     // KIS 유량은 앱키 단위로 공유되므로 KIS 수집기는 시각을 겹치지 않게 배치했다.
     // 각 스케줄러 파일의 cron 주석 참고.

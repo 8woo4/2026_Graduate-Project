@@ -35,6 +35,7 @@ import {
   type LoginChallenge,
 } from '../../services/auth/loginChallengeService'
 import { issueSessionSecret, revokeSessionSecret } from '../../services/auth/hmacService'
+import { authCookieOptions, clearAuthCookie } from '../../config/cookies'
 import Wallet from '../../models/user/Wallet'
 import User from '../../models/user/User'
 import { nextTick } from 'node:process'
@@ -284,7 +285,7 @@ export const loginStep2 = async (req: Request, res: Response, next: NextFunction
       // 정상 클라이언트는 1단계 응답을 그대로 돌려보내므로 불일치가 생기지 않는다.
       // 챌린지 소유자(=1단계를 통과한 계정)를 기록하고 챌린지를 폐기해 재사용을 막는다.
       consumeLoginChallenge(challenge)
-      res.clearCookie(LOGIN_CHALLENGE_COOKIE)
+      clearAuthCookie(req, res, LOGIN_CHALLENGE_COOKIE)
       const owner = await User.findByPk(challenge.userId, { attributes: ['email'] }).catch(() => null)
       void logAnomaly({
         userId: challenge.userId,
@@ -385,38 +386,27 @@ export const loginStep2 = async (req: Request, res: Response, next: NextFunction
       isTrustedDevice,
     )
     consumeLoginChallenge(challenge)
-    res.clearCookie(LOGIN_CHALLENGE_COOKIE)
+    clearAuthCookie(req, res, LOGIN_CHALLENGE_COOKIE)
 
-    res.cookie('accessToken', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+    res.cookie('accessToken', accessToken, authCookieOptions(req, {
       maxAge: authService.ACCESS_TOKEN_TTL_SEC * 1000,
-    })
+    }))
 
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+    res.cookie('refreshToken', refreshToken, authCookieOptions(req, {
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7일
-    })
+    }))
 
-    res.cookie('isLoggedIn', 'true', {
+    res.cookie('isLoggedIn', 'true', authCookieOptions(req, {
       httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
       maxAge: authService.ACCESS_TOKEN_TTL_SEC * 1000,
-    })
+    }))
 
     // 기기 기억하기
     if (rememberDevice) {
       const rawDeviceToken = await registerTrustedDevice(userId, userAgent, ip, componentsHash)
-      res.cookie(DEVICE_COOKIE_NAME, rawDeviceToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+      res.cookie(DEVICE_COOKIE_NAME, rawDeviceToken, authCookieOptions(req, {
         maxAge: 1000 * 60 * 60 * 24 * 30,
-      })
+      }))
     }
 
     // 이상탐지 미들웨어를 위한 locals 설정
@@ -476,9 +466,9 @@ export const loginStep2 = async (req: Request, res: Response, next: NextFunction
 
 export const logout = async (req: Request, res: Response) => {
   try {
-    res.clearCookie('accessToken')
-    res.clearCookie('refreshToken')
-    res.clearCookie('isLoggedIn')
+    clearAuthCookie(req, res, 'accessToken')
+    clearAuthCookie(req, res, 'refreshToken')
+    clearAuthCookie(req, res, 'isLoggedIn')
     // deviceToken은 로그아웃 후에도 유지 (다음 로그인 시 기기 인식용)
     return res.status(200).json({ message: '로그아웃 되었습니다' })
   } catch (error: any) {
@@ -494,10 +484,10 @@ export const withdraw = async (req: Request, res: Response) => {
     await authService.withdraw(userId)
     await revokeAllTrustedDevices(userId)
     revokeSessionSecret(userId)
-    res.clearCookie('accessToken')
-    res.clearCookie('refreshToken')
-    res.clearCookie('isLoggedIn')
-    res.clearCookie(DEVICE_COOKIE_NAME)
+    clearAuthCookie(req, res, 'accessToken')
+    clearAuthCookie(req, res, 'refreshToken')
+    clearAuthCookie(req, res, 'isLoggedIn')
+    clearAuthCookie(req, res, DEVICE_COOKIE_NAME)
     return res.status(200).json({ message: '탈퇴가 완료되었습니다' })
   } catch (error: any) {
     return res.status(400).json({ message: error.message })
@@ -515,19 +505,14 @@ export const refreshToken = async (req: Request, res: Response) => {
 
     const accessToken = authService.signAccessToken({ id: decoded.id })
 
-    res.cookie('accessToken', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+    res.cookie('accessToken', accessToken, authCookieOptions(req, {
       maxAge: authService.ACCESS_TOKEN_TTL_SEC * 1000,
-    })
+    }))
 
-    res.cookie('isLoggedIn', 'true', {
+    res.cookie('isLoggedIn', 'true', authCookieOptions(req, {
       httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
       maxAge: authService.ACCESS_TOKEN_TTL_SEC * 1000,
-    })
+    }))
 
     return res.status(200).json({ message: '토큰이 갱신되었습니다' })
   } catch (error: any) {
@@ -739,12 +724,9 @@ export const registerDevice = async (req: Request, res: Response) => {
     // 기존 기기 전체 해제 후 현재 기기 신규 등록
     await revokeAllTrustedDevices(userId)
     const rawDeviceToken = await registerTrustedDevice(userId, userAgent, ip, componentsHash)
-    res.cookie(DEVICE_COOKIE_NAME, rawDeviceToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+    res.cookie(DEVICE_COOKIE_NAME, rawDeviceToken, authCookieOptions(req, {
       maxAge: 1000 * 60 * 60 * 24 * 30,
-    })
+    }))
     return res.status(200).json({ message: '기기가 신뢰 기기로 등록되었습니다' })
   } catch (error: any) {
     return res.status(500).json({ message: error.message })
