@@ -13,7 +13,7 @@ import { describeCookiePolicy } from './config/cookies'
 import { originGuard } from './middleware/security/originGuard'
 import { initUserChannels } from './services/socket/userChannel'
 import authRouter from './routes/auth/authRouter'
-import contractTestRouter from './routes/auth/contractTestRouter'
+import contractTestRouter, { contractTestRoutesEnabled } from './routes/auth/contractTestRouter'
 import honeypotRouter from './routes/security/honeypotRouter'
 import { deviceIdMiddleware } from './middleware/security/deviceIdMiddleware'
 import adminRouter from './routes/security/adminRouter'
@@ -76,7 +76,11 @@ app.use('/api', deviceIdMiddleware) // 단말 식별 쿠키 — 1인 1계정 감
 app.use('/api/auth', authRouter)
 app.use('/api/admin/security', adminRouter)
 app.use('/api/security', securityReportRouter)
-app.use('/api/test', contractTestRouter)
+// 온체인 쓰기까지 하는 무인증 점검용 라우터 — 옵트인 없이는 경로 자체를 만들지 않는다
+if (contractTestRoutesEnabled()) {
+    console.warn('[보안] /api/test 점검용 라우터가 켜져 있다 (ENABLE_CONTRACT_TEST_ROUTES=true). 운영 환경에서는 끌 것.')
+    app.use('/api/test', contractTestRouter)
+}
 // 거래 PIN 은 모의투자·실거래 공용이라 어느 한쪽 라우터에도 두지 않는다.
 app.use('/api/trade/pin', tradePinRouter)
 app.use('/api/trade/virtual', virtualTradeRouter)
