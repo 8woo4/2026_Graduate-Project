@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 
-import { SOCKET_URL } from '../utils/api'
+import { SOCKET_URL, apiUrl } from '../utils/api'
 
 // ─── 타입 ─────────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ const IndexChart = ({ indexType, color = '#22C55E' }: ChartProps) => {
           case 'DOW':    endpoint = `/api/market/ecos/index/DJI?from=${from}&to=${to}`; break;
         }
 
-        const response = await fetch(endpoint)
+        const response = await fetch(apiUrl(endpoint))
         const result = await response.json()
 
         const rawData = result.data || []
