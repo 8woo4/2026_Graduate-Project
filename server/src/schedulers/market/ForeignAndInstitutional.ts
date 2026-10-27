@@ -215,10 +215,14 @@ export const backfillForeignAndInstitutional = async (
 // ─── 스케줄러 등록 ────────────────────────────────────────────
 
 export const startForeignAndInstitutionalScheduler = (): void => {
-    // 17:35 — 공매도(16:20~17:25) 종료 후. 3,590종목 × 1,600ms 라 약 96분 걸려
-    // 19:11 경 끝난다. 이 TR 은 당일치를 15:40 이후에만 주므로 그 제약도 만족한다.
+    // 17:50 — 공매도(16:20~17:32) 종료 후. 활성 3,951종목 × 1,600ms 라 약 106분 걸려
+    // 19:36 경 끝난다. 이 TR 은 당일치를 15:40 이후에만 주므로 그 제약도 만족한다.
+    //
+    // 17:35 에서 옮긴 이유 — 종목 마스터 동기화(2026-10-27)로 활성 종목이 3,590→3,951 이
+    // 되면서 공매도 종료가 17:25→17:32 로 밀려 여유가 10분에서 3.5분으로 줄었다. KIS
+    // 유량은 앱키 단위로 공유되므로 두 수집기가 겹치면 양쪽 다 유량 초과로 실패한다.
     cron.schedule(
-        '35 17 * * 1-5',
+        '50 17 * * 1-5',
         () => {
             collectForeignAndInstitutional().catch((err) =>
                 console.error('[ForeignAndInstitutional] 스케줄러 오류:', err)
@@ -227,7 +231,7 @@ export const startForeignAndInstitutionalScheduler = (): void => {
         { timezone: 'Asia/Seoul' }
     )
 
-    console.log('[ForeignAndInstitutional] 스케줄러 등록 완료 (평일 17:35 KST)')
+    console.log('[ForeignAndInstitutional] 스케줄러 등록 완료 (평일 17:50 KST)')
 
     runInitialCollect('ForeignAndInstitutional', collectForeignAndInstitutional)
 }

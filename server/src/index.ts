@@ -37,6 +37,7 @@ import { startStock52WeekScheduler } from './schedulers/market/Stock52Week'
 import { startForeignAndInstitutionalScheduler } from './schedulers/market/ForeignAndInstitutional'
 import { startMarketIndexScheduler } from './schedulers/market/MarketIndex'
 import { startListedSharesScheduler } from './schedulers/market/ListedShares'
+import { startStockMasterScheduler } from './schedulers/market/StockMaster'
 import { startMinuteCandleScheduler } from './schedulers/market/MinuteCandle'
 import { startCommodityScheduler } from './schedulers/market/Commodity'
 import { startStabilityScheduler } from './schedulers/market/Stability'
@@ -121,8 +122,9 @@ httpServer.listen(PORT, () => {
         //    로컬 수집 + 수급 백필이 끝나면 아래 다섯 줄을 모두 되살릴 것.
         startStockPriceScheduler()            // 일봉        평일 16:00
         startShortSellingScheduler()          // 공매도      평일 16:20
-        startForeignAndInstitutionalScheduler() // 수급      평일 17:35
+        startForeignAndInstitutionalScheduler() // 수급      평일 17:50
         //startMinuteCandleScheduler()          // 분봉        평일 08:00 / 19:20
+        startStockMasterScheduler()           // 종목 마스터 매주 월 06:30 (KIS 마스터파일)
         startListedSharesScheduler()          // 상장주식수  매주 월 07:00 (KIS)
 
         // 외부 API — KIS 와 무관

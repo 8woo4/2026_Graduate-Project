@@ -22,6 +22,11 @@ export const getAllLatestPrices = async (_req: Request, res: Response): Promise<
                 s.code,
                 s.market,
                 CASE
+                     WHEN s.security_group = 'EF' THEN 'ETF'
+                     WHEN s.security_group = 'MF' THEN '펀드'
+                     WHEN s.security_group IS NOT NULL THEN s.market
+                     -- security_group 이 NULL 인 행(= StockMaster 동기화 전)은 이름 꼬리로
+                     -- 판정하던 기존 규칙을 그대로 쓴다. 마이그레이션만 적용된 상태에서도 분류가 끊기지 않는다.
                      WHEN s.name REGEXP '\\\\s+EF[A-Z0-9]*(\\\\s+[0-9]+)?$' THEN 'ETF'
                      WHEN s.name REGEXP '\\\\s+MF[A-Z0-9]*(\\\\s+[0-9]+)?$' THEN '펀드'
                      ELSE s.market
@@ -113,10 +118,16 @@ export const getStockDetail = async (req: Request, res: Response): Promise<void>
 
         const [info] = await sequelize.query<{
             id: number; name: string; code: string; market: string; type: string;
+            aiTarget: number;
             price: number; change: number; changeRate: number; volume: number;
         }>(
             `SELECT s.id, s.name, s.code, s.market,
                     CASE
+                         WHEN s.security_group = 'EF' THEN 'ETF'
+                         WHEN s.security_group = 'MF' THEN '펀드'
+                         WHEN s.security_group IS NOT NULL THEN s.market
+                         -- security_group 이 NULL 인 행(= StockMaster 동기화 전)은 이름 꼬리로
+                         -- 판정하던 기존 규칙을 그대로 쓴다. 마이그레이션만 적용된 상태에서도 분류가 끊기지 않는다.
                          WHEN s.name REGEXP '\\\\s+EF[A-Z0-9]*(\\\\s+[0-9]+)?$' THEN 'ETF'
                          WHEN s.name REGEXP '\\\\s+MF[A-Z0-9]*(\\\\s+[0-9]+)?$' THEN '펀드'
                          ELSE s.market
@@ -126,7 +137,11 @@ export const getStockDetail = async (req: Request, res: Response): Promise<void>
                     CASE WHEN COALESCE(sp_prev.close, 0) > 0
                          THEN (sp.close - sp_prev.close) / sp_prev.close * 100
                          ELSE 0 END AS changeRate,
-                    sp.volume
+                    sp.volume,
+                    -- 클라이언트가 AI 예측 비대상 종목에 /api/ai/predict 를 호출하지 않도록 내려준다.
+                    -- 호출하면 추론 가드가 UNKNOWN_CODE 로 거부하고, 그 거부는 반복 시
+                    -- ADVERSARIAL_INPUT 으로 승격돼 정상 사용자가 이상탐지에 걸린다.
+                    s.is_ml_target AS aiTarget
              FROM stocks s
              JOIN stock_prices sp ON s.id = sp.stock_id
              LEFT JOIN stock_prices sp_prev ON sp_prev.stock_id = s.id

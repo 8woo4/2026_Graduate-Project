@@ -104,28 +104,25 @@ const StockList: React.FC = () => {
     }
   }
 
-  // 👇 [핵심 수정] ETF 종목을 이름 기반으로 확실하게 걸러냅니다.
+  // 분류는 서버가 내려주는 type 으로 한다. type 은 stocks.security_group 에서 파생되며
+  // 값은 'KOSPI' | 'KOSDAQ' | 'ETF' | '펀드' 뿐이고, ETF·펀드는 시장 값이 아니라 그
+  // 유형으로 내려오므로 코스피/코스닥 탭에 섞이지 않는다.
+  //
+  // 이전 구현은 이름에 KODEX·TIGER·KBSTAR·ACE 가 들어가는지로 ETF 를 추정했는데,
+  // (1) 그 운용사 접두어가 없는 ETF 를 놓치고 (2) 코스피 탭에는 ETF 가 그대로 섞였고
+  // (3) '펀드' 탭은 marketMap 에 없어 항상 빈 목록이었다.
   const filteredStocks = useMemo(() => {
-    const marketMap: Record<string, string> = { '코스피': 'KOSPI', '코스닥': 'KOSDAQ' };
+    const TYPE_OF: Record<string, string> = {
+      '코스피': 'KOSPI', '코스닥': 'KOSDAQ', 'ETF': 'ETF', '펀드': '펀드',
+    };
     return stocks
       .filter(stock => {
         // 1. 검색어 필터
         const matchSearch = stock.name.toLowerCase().includes(searchTerm.toLowerCase()) || stock.code.includes(searchTerm);
 
-        // 2. 카테고리(시장) 필터
-        let matchMarket = false;
-        if (selectedMarket === '전체') {
-          matchMarket = true;
-        } else if (selectedMarket === 'ETF') {
-          const upperName = stock.name.toUpperCase();
-          matchMarket = upperName.includes('KODEX') ||
-                        upperName.includes('TIGER') ||
-                        upperName.includes('KBSTAR') ||
-                        upperName.includes('ACE') ||
-                        stock.market === 'ETF';
-        } else {
-          matchMarket = stock.market === marketMap[selectedMarket];
-        }
+        // 2. 카테고리 필터 — type 이 없는 구버전 응답은 market 으로 떨어진다
+        const kind = stock.type ?? stock.market;
+        const matchMarket = selectedMarket === '전체' || kind === TYPE_OF[selectedMarket];
 
         return matchSearch && matchMarket;
       })
