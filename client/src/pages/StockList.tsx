@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { io, type Socket } from 'socket.io-client';
 import { formatStockName } from '../utils/formatStockName';
+import { pickSubscribeCodes } from '../utils/subscribeCodes';
 
 import { API_BASE, SOCKET_URL } from '../utils/api'
 import { isLoggedIn } from '../utils/session'
@@ -148,18 +149,70 @@ const StockList: React.FC = () => {
   }, [stocks, favorites]);
 
   // ─── 화면에 보이는 종목만 실시간 구독 ──────────────────────
-  // 전종목(3,951)을 밀면 KIS 유량을 다 먹으므로, 증권사와 같은 방식으로 지금 보고 있는
-  // 종목만 구독한다. 목록은 거래량 내림차순이고 검색·탭 필터가 적용된 결과이므로,
-  // 그 상위 SUBSCRIBE_LIMIT 개가 사용자가 실제로 보는 구간이다. 검색을 하면 결과가
-  // 그 구간으로 들어오므로 검색한 종목이 바로 구독 대상이 된다.
-  // 관심종목 패널은 따로 렌더되므로 함께 포함한다.
-  const subscribeCodes = useMemo(() => {
-    const SUBSCRIBE_LIMIT = 30;
-    const codes = new Set<string>();
-    for (const s of filteredStocks.slice(0, SUBSCRIBE_LIMIT)) codes.add(s.code);
-    for (const s of favoriteStocks) codes.add(s.code);
-    return [...codes];
-  }, [filteredStocks, favoriteStocks]);
+  // 전종목(약 4천)을 밀면 KIS 유량을 다 먹으므로, 증권사와 같은 방식으로 지금 눈에
+  // 들어온 종목만 구독한다. 목록은 가상화 없이 전 행을 렌더하므로 '보이는 행'은
+  // IntersectionObserver 로 판별한다. 관심종목 패널은 따로 렌더되므로 함께 포함한다.
+  const visibleRef = useRef<Set<string>>(new Set());
+  const [visibleCodes, setVisibleCodes] = useState<string[]>([]);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 스크롤 중에는 교차 이벤트가 연달아 들어온다. 멈춘 뒤 한 번만 상태로 올려
+  // 구독 교체와 리렌더가 요동치지 않게 한다.
+  const scheduleFlush = () => {
+    if (flushRef.current) clearTimeout(flushRef.current);
+    flushRef.current = setTimeout(() => setVisibleCodes([...visibleRef.current]), 250);
+  };
+
+  const getObserver = () => {
+    if (observerRef.current) return observerRef.current;
+    if (typeof IntersectionObserver === 'undefined') return null;
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        let changed = false;
+        for (const e of entries) {
+          const code = (e.target as HTMLElement).dataset.code;
+          if (!code) continue;
+          if (e.isIntersecting) {
+            if (!visibleRef.current.has(code)) { visibleRef.current.add(code); changed = true; }
+          } else if (visibleRef.current.delete(code)) {
+            changed = true;
+          }
+        }
+        if (changed) scheduleFlush();
+      },
+      // 화면 조금 밖까지 미리 구독해 스크롤 직후 값이 비어 보이는 구간을 줄인다
+      { rootMargin: '240px 0px' },
+    );
+    return observerRef.current;
+  };
+
+  // 행 하나당 ref. 신원이 고정돼야 한다 — 시세가 갱신될 때마다 리렌더되는데,
+  // ref 함수가 매번 새로 만들어지면 React 가 전 행의 ref 를 떼었다 붙여 관측이 요동친다.
+  // 그래서 종목코드는 클로저가 아니라 data-code 속성에서 읽는다.
+  const rowRef = useCallback((el: HTMLTableRowElement | null) => {
+    if (!el) return;
+    const obs = getObserver();
+    if (!obs) return;
+    obs.observe(el);
+    // React 19 의 ref 정리 함수 — 필터 변경·언마운트로 행이 사라질 때 호출된다
+    return () => {
+      obs.unobserve(el);
+      const code = el.dataset.code;
+      if (code && visibleRef.current.delete(code)) scheduleFlush();
+    };
+  }, []);
+
+  useEffect(() => () => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (flushRef.current) clearTimeout(flushRef.current);
+  }, []);
+
+  const subscribeCodes = useMemo(
+    () => pickSubscribeCodes(filteredStocks, visibleCodes, favoriteStocks),
+    [visibleCodes, filteredStocks, favoriteStocks],
+  );
 
   useEffect(() => {
     // 검색어를 타이핑하는 동안 구독 집합이 매 글자 바뀌어 subscribe/unsubscribe 가
@@ -272,8 +325,10 @@ const StockList: React.FC = () => {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {filteredStocks.map((stock) => (
-              <tr 
-                key={stock.id} 
+              <tr
+                key={stock.id}
+                ref={rowRef}
+                data-code={stock.code}
                 onClick={() => navigate(`/stock/${stock.id}`)}
                 className="hover:bg-gray-50 transition-colors cursor-pointer"
               >
