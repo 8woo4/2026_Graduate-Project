@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
+import { io, type Socket } from 'socket.io-client';
 import { formatStockName } from '../utils/formatStockName';
+import { pickSubscribeCodes } from '../utils/subscribeCodes';
 
 import { API_BASE, SOCKET_URL } from '../utils/api'
 import { isLoggedIn } from '../utils/session'
@@ -33,6 +34,9 @@ const StockList: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+
+  const socketRef = useRef<Socket | null>(null);
+  const subscribedRef = useRef<Set<string>>(new Set());
 
   const fetchStocks = async () => {
     try {
@@ -66,6 +70,7 @@ const StockList: React.FC = () => {
 
     // 실시간 시세 구독
     const socket = io(SOCKET_URL);
+    socketRef.current = socket;
     socket.on('stock:price', (data: {
       code: string; price: number; change: number; changeRate: number; volume: number;
     }) => {
@@ -76,7 +81,17 @@ const StockList: React.FC = () => {
       ));
     });
 
-    return () => { socket.disconnect(); };
+    // 재연결되면 서버의 구독 상태(소켓 단위 집합)가 비어 있으므로 다시 올린다.
+    socket.on('connect', () => {
+      subscribedRef.current.forEach(code => socket.emit('subscribe:stock', code));
+    });
+
+    return () => {
+      socketRef.current = null;
+      subscribedRef.current = new Set();
+      // disconnect 하면 서버가 이 소켓의 구독을 전부 해제한다(refCount 감소) — 개별 unsubscribe 불필요
+      socket.disconnect();
+    };
   }, []);
 
   const toggleFavorite = (e: React.MouseEvent, id: number) => {
@@ -104,28 +119,25 @@ const StockList: React.FC = () => {
     }
   }
 
-  // 👇 [핵심 수정] ETF 종목을 이름 기반으로 확실하게 걸러냅니다.
+  // 분류는 서버가 내려주는 type 으로 한다. type 은 stocks.security_group 에서 파생되며
+  // 값은 'KOSPI' | 'KOSDAQ' | 'ETF' | '펀드' 뿐이고, ETF·펀드는 시장 값이 아니라 그
+  // 유형으로 내려오므로 코스피/코스닥 탭에 섞이지 않는다.
+  //
+  // 이전 구현은 이름에 KODEX·TIGER·KBSTAR·ACE 가 들어가는지로 ETF 를 추정했는데,
+  // (1) 그 운용사 접두어가 없는 ETF 를 놓치고 (2) 코스피 탭에는 ETF 가 그대로 섞였고
+  // (3) '펀드' 탭은 marketMap 에 없어 항상 빈 목록이었다.
   const filteredStocks = useMemo(() => {
-    const marketMap: Record<string, string> = { '코스피': 'KOSPI', '코스닥': 'KOSDAQ' };
+    const TYPE_OF: Record<string, string> = {
+      '코스피': 'KOSPI', '코스닥': 'KOSDAQ', 'ETF': 'ETF', '펀드': '펀드',
+    };
     return stocks
       .filter(stock => {
         // 1. 검색어 필터
         const matchSearch = stock.name.toLowerCase().includes(searchTerm.toLowerCase()) || stock.code.includes(searchTerm);
 
-        // 2. 카테고리(시장) 필터
-        let matchMarket = false;
-        if (selectedMarket === '전체') {
-          matchMarket = true;
-        } else if (selectedMarket === 'ETF') {
-          const upperName = stock.name.toUpperCase();
-          matchMarket = upperName.includes('KODEX') ||
-                        upperName.includes('TIGER') ||
-                        upperName.includes('KBSTAR') ||
-                        upperName.includes('ACE') ||
-                        stock.market === 'ETF';
-        } else {
-          matchMarket = stock.market === marketMap[selectedMarket];
-        }
+        // 2. 카테고리 필터 — type 이 없는 구버전 응답은 market 으로 떨어진다
+        const kind = stock.type ?? stock.market;
+        const matchMarket = selectedMarket === '전체' || kind === TYPE_OF[selectedMarket];
 
         return matchSearch && matchMarket;
       })
@@ -135,6 +147,91 @@ const StockList: React.FC = () => {
   const favoriteStocks = useMemo(() => {
     return favorites.map(id => stocks.find(s => s.id === id)).filter(Boolean) as StockData[];
   }, [stocks, favorites]);
+
+  // ─── 화면에 보이는 종목만 실시간 구독 ──────────────────────
+  // 전종목(약 4천)을 밀면 KIS 유량을 다 먹으므로, 증권사와 같은 방식으로 지금 눈에
+  // 들어온 종목만 구독한다. 목록은 가상화 없이 전 행을 렌더하므로 '보이는 행'은
+  // IntersectionObserver 로 판별한다. 관심종목 패널은 따로 렌더되므로 함께 포함한다.
+  const visibleRef = useRef<Set<string>>(new Set());
+  const [visibleCodes, setVisibleCodes] = useState<string[]>([]);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const flushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 스크롤 중에는 교차 이벤트가 연달아 들어온다. 멈춘 뒤 한 번만 상태로 올려
+  // 구독 교체와 리렌더가 요동치지 않게 한다.
+  const scheduleFlush = () => {
+    if (flushRef.current) clearTimeout(flushRef.current);
+    flushRef.current = setTimeout(() => setVisibleCodes([...visibleRef.current]), 250);
+  };
+
+  const getObserver = () => {
+    if (observerRef.current) return observerRef.current;
+    if (typeof IntersectionObserver === 'undefined') return null;
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        let changed = false;
+        for (const e of entries) {
+          const code = (e.target as HTMLElement).dataset.code;
+          if (!code) continue;
+          if (e.isIntersecting) {
+            if (!visibleRef.current.has(code)) { visibleRef.current.add(code); changed = true; }
+          } else if (visibleRef.current.delete(code)) {
+            changed = true;
+          }
+        }
+        if (changed) scheduleFlush();
+      },
+      // 화면 조금 밖까지 미리 구독해 스크롤 직후 값이 비어 보이는 구간을 줄인다
+      { rootMargin: '240px 0px' },
+    );
+    return observerRef.current;
+  };
+
+  // 행 하나당 ref. 신원이 고정돼야 한다 — 시세가 갱신될 때마다 리렌더되는데,
+  // ref 함수가 매번 새로 만들어지면 React 가 전 행의 ref 를 떼었다 붙여 관측이 요동친다.
+  // 그래서 종목코드는 클로저가 아니라 data-code 속성에서 읽는다.
+  const rowRef = useCallback((el: HTMLTableRowElement | null) => {
+    if (!el) return;
+    const obs = getObserver();
+    if (!obs) return;
+    obs.observe(el);
+    // React 19 의 ref 정리 함수 — 필터 변경·언마운트로 행이 사라질 때 호출된다
+    return () => {
+      obs.unobserve(el);
+      const code = el.dataset.code;
+      if (code && visibleRef.current.delete(code)) scheduleFlush();
+    };
+  }, []);
+
+  useEffect(() => () => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (flushRef.current) clearTimeout(flushRef.current);
+  }, []);
+
+  const subscribeCodes = useMemo(
+    () => pickSubscribeCodes(filteredStocks, visibleCodes, favoriteStocks),
+    [visibleCodes, filteredStocks, favoriteStocks],
+  );
+
+  useEffect(() => {
+    // 검색어를 타이핑하는 동안 구독 집합이 매 글자 바뀌어 subscribe/unsubscribe 가
+    // 폭주하지 않도록 잠깐 기다린다.
+    const t = setTimeout(() => {
+      const socket = socketRef.current;
+      if (!socket) return;
+
+      const next = new Set(subscribeCodes);
+      const prev = subscribedRef.current;
+
+      for (const code of next) if (!prev.has(code)) socket.emit('subscribe:stock', code);
+      for (const code of prev) if (!next.has(code)) socket.emit('unsubscribe:stock', code);
+
+      subscribedRef.current = next;
+    }, 400);
+
+    return () => clearTimeout(t);
+  }, [subscribeCodes]);
 
   const formatNum = (val: string | number) => Number(val).toLocaleString();
 
@@ -228,8 +325,10 @@ const StockList: React.FC = () => {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {filteredStocks.map((stock) => (
-              <tr 
-                key={stock.id} 
+              <tr
+                key={stock.id}
+                ref={rowRef}
+                data-code={stock.code}
                 onClick={() => navigate(`/stock/${stock.id}`)}
                 className="hover:bg-gray-50 transition-colors cursor-pointer"
               >

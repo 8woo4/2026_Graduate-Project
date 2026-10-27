@@ -9,15 +9,18 @@
  *     "삼성전자"           → "삼성전자"
  */
 export function formatStockName(raw: string): string {
-  // 1. KIS 내부 코드 제거: 알려진 2자리 타입코드(ST/EF/MF/DR/RF/BC)만 명시적으로 타겟
-  //    - \s* : 코드 앞 공백 유무 무관
-  //    - [A-Z0-9]* : ST30, EF00 등 뒤에 붙는 숫자/대문자
-  //    - (\s+[0-9]+)? : "EF 00", "MF 0" 처럼 공백+숫자가 추가로 붙는 경우
-  // ST는 공백 없이 붙는 경우도 있어 \s* 유지, 나머지는 공백 필수(\s+)로 오탐 방지
-  const cleaned = raw
-    .replace(/\s*ST[A-Z0-9]*$/, '')
-    .replace(/\s+(EF|MF|DR|RF|BC|FS)[A-Z0-9]*(\s+[0-9]+)?$/, '')
-    .trim()
+  // 1. 레거시 꼬리 코드 제거.
+  //    서버의 StockMaster 동기화가 돌면 stocks.name 은 꼬리 없는 정상 이름으로 저장되므로,
+  //    이 단계는 아직 동기화되지 않은 값을 화면에서만 가리는 호환 처리다.
+  //
+  //    공백 2칸 이상을 요구한다 — 오염된 값은 이름을 고정폭 40자로 자른 결과라
+  //    "동화약품"+공백 32칸+"ST30" 꼴로 패딩이 남는다. 반면 정상 종목명은 코드처럼 보이는
+  //    토큰 앞에 공백이 한 칸뿐이거나 아예 없다("STX", "GST", "KODEX 유럽명품TOP10 STOXX",
+  //    "ACE 중국과창판STAR50"). \s* 로 두면 이것들이 빈 문자열이나 "G" 로 깎인다.
+  const stripped = raw.replace(/\s{2,}(ST|EF|RT|FS|DR|IF|MF|EN|BC|RF)[A-Z0-9]*(\s+[0-9]+)?$/, '')
+
+  // 전부 깎여 빈 문자열이 되면 원본을 쓴다 — 이름이 비는 것보다 꼬리가 보이는 편이 낫다.
+  const cleaned = stripped.trim() || raw.trim()
 
   // 2. 우선주 구분자 괄호 처리: 끝의 숫자+우+알파벳(선택) 패턴
   return cleaned.replace(/(\d*우[A-Z]?)$/, '($1)')

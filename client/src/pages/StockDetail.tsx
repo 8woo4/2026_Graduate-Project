@@ -16,6 +16,8 @@ interface StockInfo {
     code: string
     market: string
     type: string
+    /** AI 예측 대상 여부(서버 stocks.is_ml_target). 구버전 API 는 내려주지 않으므로 optional. */
+    aiTarget?: number
     price: number
     change: number
     changeRate: number
@@ -243,6 +245,17 @@ export default function StockDetail() {
     useEffect(() => {
         if (!info?.code) return
 
+        // AI 예측 비대상(ETF·리츠·펀드·예탁증서)은 아예 호출하지 않는다. 호출하면 추론
+        // 가드가 UNKNOWN_CODE 로 거부하고, 그 거부는 반복 시 ADVERSARIAL_INPUT 으로
+        // 승격돼 ETF 를 둘러본 정상 사용자가 이상탐지에 걸린다.
+        // aiTarget 이 undefined 면 구버전 API 이므로 기존처럼 호출한다(서버가 최종 판단).
+        if (info.aiTarget === 0) {
+            setAiPrediction(null)
+            setAiError('이 종목은 AI 예측 대상이 아닙니다. 개별 기업 재무·수급으로 학습한 모델이라 ETF·리츠·펀드에는 종목 단위 예측을 제공하지 않습니다.')
+            setAiLoading(false)
+            return
+        }
+
         const cached = aiCache.current.get(aiHorizon)
         if (cached) {
             setAiPrediction(cached)
@@ -280,7 +293,7 @@ export default function StockDetail() {
             .finally(() => { if (!cancelled) setAiLoading(false) })
 
         return () => { cancelled = true }
-    }, [info?.code, aiHorizon])
+    }, [info?.code, info?.aiTarget, aiHorizon])
 
     // 차트에 그릴 데이터 계산
     const { chartItems, isMinute, isLine } = useMemo(() => {
