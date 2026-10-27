@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import { io } from 'socket.io-client';
+import { io, type Socket } from 'socket.io-client';
 import { formatStockName } from '../utils/formatStockName';
 
 import { API_BASE, SOCKET_URL } from '../utils/api'
@@ -33,6 +33,9 @@ const StockList: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+
+  const socketRef = useRef<Socket | null>(null);
+  const subscribedRef = useRef<Set<string>>(new Set());
 
   const fetchStocks = async () => {
     try {
@@ -66,6 +69,7 @@ const StockList: React.FC = () => {
 
     // 실시간 시세 구독
     const socket = io(SOCKET_URL);
+    socketRef.current = socket;
     socket.on('stock:price', (data: {
       code: string; price: number; change: number; changeRate: number; volume: number;
     }) => {
@@ -76,7 +80,17 @@ const StockList: React.FC = () => {
       ));
     });
 
-    return () => { socket.disconnect(); };
+    // 재연결되면 서버의 구독 상태(소켓 단위 집합)가 비어 있으므로 다시 올린다.
+    socket.on('connect', () => {
+      subscribedRef.current.forEach(code => socket.emit('subscribe:stock', code));
+    });
+
+    return () => {
+      socketRef.current = null;
+      subscribedRef.current = new Set();
+      // disconnect 하면 서버가 이 소켓의 구독을 전부 해제한다(refCount 감소) — 개별 unsubscribe 불필요
+      socket.disconnect();
+    };
   }, []);
 
   const toggleFavorite = (e: React.MouseEvent, id: number) => {
@@ -132,6 +146,39 @@ const StockList: React.FC = () => {
   const favoriteStocks = useMemo(() => {
     return favorites.map(id => stocks.find(s => s.id === id)).filter(Boolean) as StockData[];
   }, [stocks, favorites]);
+
+  // ─── 화면에 보이는 종목만 실시간 구독 ──────────────────────
+  // 전종목(3,951)을 밀면 KIS 유량을 다 먹으므로, 증권사와 같은 방식으로 지금 보고 있는
+  // 종목만 구독한다. 목록은 거래량 내림차순이고 검색·탭 필터가 적용된 결과이므로,
+  // 그 상위 SUBSCRIBE_LIMIT 개가 사용자가 실제로 보는 구간이다. 검색을 하면 결과가
+  // 그 구간으로 들어오므로 검색한 종목이 바로 구독 대상이 된다.
+  // 관심종목 패널은 따로 렌더되므로 함께 포함한다.
+  const subscribeCodes = useMemo(() => {
+    const SUBSCRIBE_LIMIT = 30;
+    const codes = new Set<string>();
+    for (const s of filteredStocks.slice(0, SUBSCRIBE_LIMIT)) codes.add(s.code);
+    for (const s of favoriteStocks) codes.add(s.code);
+    return [...codes];
+  }, [filteredStocks, favoriteStocks]);
+
+  useEffect(() => {
+    // 검색어를 타이핑하는 동안 구독 집합이 매 글자 바뀌어 subscribe/unsubscribe 가
+    // 폭주하지 않도록 잠깐 기다린다.
+    const t = setTimeout(() => {
+      const socket = socketRef.current;
+      if (!socket) return;
+
+      const next = new Set(subscribeCodes);
+      const prev = subscribedRef.current;
+
+      for (const code of next) if (!prev.has(code)) socket.emit('subscribe:stock', code);
+      for (const code of prev) if (!next.has(code)) socket.emit('unsubscribe:stock', code);
+
+      subscribedRef.current = next;
+    }, 400);
+
+    return () => clearTimeout(t);
+  }, [subscribeCodes]);
 
   const formatNum = (val: string | number) => Number(val).toLocaleString();
 
