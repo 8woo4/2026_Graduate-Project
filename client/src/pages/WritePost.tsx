@@ -2,6 +2,7 @@ import { useState, useEffect, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { API_BASE } from '../utils/api'
+import { communityApi } from '../utils/communityApi'
 
 export default function WritePost() {
   const navigate = useNavigate();
@@ -44,38 +45,20 @@ export default function WritePost() {
     }
   };
 
-  const handleSubmit = () => {
-    if (!nickname) return; 
+  const handleSubmit = async () => {
+    if (!nickname) return;
     if (!title || !content) return alert('제목과 내용을 입력해주세요!');
 
     setIsSubmitting(true);
-    
-    setTimeout(() => {
-      const savedPosts = localStorage.getItem('upTick_posts');
-      const postList = savedPosts ? JSON.parse(savedPosts) : [];
-
-      const newPost = {
-        id: Date.now(),
-        title,
-        author: nickname,
-        category,
-        content,
-        imageUrl: image,
-        date: new Date().toLocaleString('ko-KR', {
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', hour12: false,
-        }),
-        views: 0,
-        likes: 0,
-        comments: [],
-      };
-
-      localStorage.setItem('upTick_posts', JSON.stringify([newPost, ...postList]));
+    try {
+      await communityApi.createPost({ title, category, content, imageUrl: image || undefined });
       alert('게시글이 성공적으로 등록되었습니다.');
-      
-      setIsSubmitting(false);
       navigate('/community');
-    }, 600);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '게시글을 등록하지 못했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!nicknameLoading && nickname === null) {

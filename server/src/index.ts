@@ -25,6 +25,7 @@ import realTradeRouter from './routes/trade/realTradeRouter'
 import surveyRouter from './routes/user/surveyRouter'
 import userRouter from './routes/user/userRouter'
 import predictionRouter from './routes/ai/predictionRouter'
+import communityRouter from './routes/community/communityRouter'
 
 // 스케줄러
 import stockPriceRouter from './routes/market/StockPrice'
@@ -57,6 +58,9 @@ initUserChannels(io)
 const PORT = process.env.PORT || 3000
 
 // 미들웨어
+// 커뮤니티는 이미지(data URL, 최대 1MB)를 본문에 실으므로 이 경로만 한도를 넓힌다.
+// 먼저 파싱된 본문은 아래 전역 파서가 다시 읽지 않는다. (HMAC 대상이 아니라 rawBody 불필요)
+app.use('/api/community', express.json({ limit: '2mb' }))
 // HMAC 요청서명 검증을 위해 raw body를 보존 (서명 재계산 시 파싱 전 원본 필요)
 app.use(express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8') } }))
 app.use(express.urlencoded({ extended: true }))
@@ -89,6 +93,7 @@ app.use('/api/trade/real', realTradeRouter)
 app.use('/api/survey', surveyRouter)
 app.use('/api/user', userRouter)
 app.use('/api/ai', predictionRouter)
+app.use('/api/community', communityRouter)
 
 // 스케줄러 라우터
 app.use('/api/market/stock-prices', stockPriceRouter)

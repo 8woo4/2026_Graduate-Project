@@ -11,6 +11,7 @@ interface RateLimitEntry {
 const loginStore = new Map<string, RateLimitEntry>()
 const emailStore = new Map<string, RateLimitEntry>()
 const smsStore = new Map<string, RateLimitEntry>()
+const communityStore = new Map<string, RateLimitEntry>()
 
 const getIp = (req: Request): string =>
   (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
@@ -93,6 +94,14 @@ export const emailCodeRateLimiter = createLimiter(emailStore, {
   windowMs: 60 * 1000,
   blockMs: 60 * 1000,
   message: '이메일 인증 요청이 너무 많습니다. 잠시 후 다시 시도해주세요',
+})
+
+// 커뮤니티 쓰기 Rate Limiter: 분당 20회 초과 시 5분 차단 (글·댓글·추천·삭제 — 도배 방지)
+export const communityWriteRateLimiter = createLimiter(communityStore, {
+  maxAttempts: 20,
+  windowMs: 60 * 1000,
+  blockMs: 5 * 60 * 1000,
+  message: '커뮤니티 요청이 너무 많습니다. 잠시 후 다시 시도해주세요',
 })
 
 // SMS 인증 Rate Limiter: 분당 3회 제한
