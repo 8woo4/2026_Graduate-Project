@@ -1,31 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-export interface Comment {
-  id: number;
-  author: string;
-  content: string;
-  date: string;
-  imageUrl?: string; // ✨ 추가: 댓글 이미지 속성
-}
-
-export interface Post {
-  id: number;
-  title: string;
-  author: string;
-  date: string;
-  views: number;
-  likes: number;
-  category: string;
-  content: string;
-  comments: Comment[];
-  imageUrl?: string;
-}
+import { communityApi, formatDate, imageSrc, type CommunityPost } from '../utils/communityApi'
 
 export default function Community() {
   const navigate = useNavigate();
 
-  const [postList, setPostList] = useState<Post[]>([]);
+  const [postList, setPostList] = useState<CommunityPost[]>([]);
   const [activeTab, setActiveTab] = useState('전체');
   const [activeFilter, setActiveFilter] = useState('최신순');
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,15 +14,10 @@ export default function Community() {
 
   useEffect(() => {
     setIsLoading(true);
-    setTimeout(() => {
-      const savedPosts = localStorage.getItem('upTick_posts');
-      if (savedPosts) {
-        setPostList(JSON.parse(savedPosts));
-      } else {
-        setPostList([]);
-      }
-      setIsLoading(false);
-    }, 300);
+    communityApi.listPosts()
+      .then(setPostList)
+      .catch(() => setPostList([]))
+      .finally(() => setIsLoading(false));
   }, []);
 
   const highlightText = (text: string, query: string) => {
@@ -67,7 +42,7 @@ export default function Community() {
   });
 
   const sortedPosts = [...filteredPosts].sort((a, b) => {
-    if (activeFilter === '최신순') return new Date(b.date.replace(/\./g, '-')).getTime() - new Date(a.date.replace(/\./g, '-')).getTime();
+    if (activeFilter === '최신순') return new Date(b.date).getTime() - new Date(a.date).getTime();
     if (activeFilter === '조회순') return b.views - a.views;
     if (activeFilter === '추천순') return b.likes - a.likes;
     return 0;
@@ -114,7 +89,7 @@ export default function Community() {
                 
                 {post.imageUrl && (
                   <img 
-                    src={post.imageUrl} 
+                    src={imageSrc(post.imageUrl)}
                     alt="썸네일" 
                     style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #eee', flexShrink: 0 }} 
                   />
@@ -126,7 +101,7 @@ export default function Community() {
               </div>
 
               <span style={{ color: '#888' }}>{highlightText(post.author, searchTerm)}</span>
-              <span style={{ color: '#aaa', fontSize: '12px' }}>{post.date}</span>
+              <span style={{ color: '#aaa', fontSize: '12px' }}>{formatDate(post.date)}</span>
               <span style={{ color: '#aaa', textAlign: 'center' }}>{post.views}</span>
               <span style={{ color: '#4CAF4F', textAlign: 'center' }}>{post.likes}</span>
             </div>

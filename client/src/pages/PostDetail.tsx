@@ -2,33 +2,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useRef, type ChangeEvent } from 'react';
 
 import { API_BASE } from '../utils/api'
-
-export interface Comment {
-  id: number;
-  author: string;
-  content: string;
-  date: string;
-  imageUrl?: string;
-  replies?: Comment[];
-}
-
-export interface Post {
-  id: number;
-  title: string;
-  author: string;
-  date: string;
-  views: number;
-  likes: number;
-  category: string;
-  content: string;
-  comments: Comment[];
-  imageUrl?: string;
-}
+import { communityApi, formatDate, imageSrc, type CommunityPost } from '../utils/communityApi'
 
 export default function PostDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [post, setPost] = useState<Post | null>(null);
+  const [post, setPost] = useState<CommunityPost | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const hasIncremented = useRef(false);
 
@@ -43,28 +22,31 @@ export default function PostDetail() {
   const [nickname, setNickname] = useState<string | null>(null);
   const [nicknameLoading, setNicknameLoading] = useState(true);
 
+  const postId = Number(id);
+
+  // 댓글 작성·삭제 뒤에도 서버 상태를 그대로 다시 받는다
+  const reloadPost = async () => {
+    try {
+      setPost(await communityApi.getPost(postId));
+    } catch {
+      setPost(null);
+    }
+  };
+
   useEffect(() => {
     setIsLoading(true);
-    setTimeout(() => {
-      const savedPosts = localStorage.getItem('upTick_posts');
-      if (savedPosts) {
-        const posts: Post[] = JSON.parse(savedPosts);
-        const foundPost = posts.find(p => p.id === Number(id));
-        
-        if (foundPost && !hasIncremented.current) {
-          const updatedPosts = posts.map(p => 
-            p.id === foundPost.id ? { ...p, views: (p.views || 0) + 1 } : p
-          );
-          localStorage.setItem('upTick_posts', JSON.stringify(updatedPosts));
-          setPost({ ...foundPost, views: (foundPost.views || 0) + 1 });
+    communityApi.getPost(postId)
+      .then(async (found) => {
+        if (!hasIncremented.current) {
           hasIncremented.current = true;
-        } else {
-          setPost(foundPost || null);
+          await communityApi.addView(postId).catch(() => undefined);
+          found = { ...found, views: found.views + 1 };
         }
-      }
-      setIsLoading(false);
-    }, 300);
-  }, [id]);
+        setPost(found);
+      })
+      .catch(() => setPost(null))
+      .finally(() => setIsLoading(false));
+  }, [postId]);
 
   useEffect(() => {
     const fetchNickname = async () => {
@@ -84,25 +66,26 @@ export default function PostDetail() {
     fetchNickname();
   }, []);
 
-  const handleLike = () => {
+  const handleLike = async () => {
     if (!post) return;
-    const savedPosts = localStorage.getItem('upTick_posts');
-    if (savedPosts) {
-      const posts: Post[] = JSON.parse(savedPosts);
-      const updatedPosts = posts.map(p => p.id === post.id ? { ...p, likes: (p.likes || 0) + 1 } : p);
-      localStorage.setItem('upTick_posts', JSON.stringify(updatedPosts));
-      setPost({ ...post, likes: (post.likes || 0) + 1 });
+    try {
+      const { likes } = await communityApi.likePost(post.id);
+      setPost({ ...post, likes, liked: true });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '추천하지 못했습니다.');
     }
   };
 
-  const handleDeletePost = () => {
+  const handleDeletePost = async () => {
     if (!post) return;
     if (window.confirm('정말로 이 게시글을 삭제하시겠습니까?')) {
-      const savedPosts = JSON.parse(localStorage.getItem('upTick_posts') || '[]');
-      const updatedPosts = savedPosts.filter((p: Post) => p.id !== post.id);
-      localStorage.setItem('upTick_posts', JSON.stringify(updatedPosts));
-      alert('게시글이 삭제되었습니다.');
-      navigate('/community', { replace: true });
+      try {
+        await communityApi.deletePost(post.id);
+        alert('게시글이 삭제되었습니다.');
+        navigate('/community', { replace: true });
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '게시글을 삭제하지 못했습니다.');
+      }
     }
   };
 
@@ -118,97 +101,50 @@ export default function PostDetail() {
     }
   };
 
-  const handleAddComment = () => {
+  const handleAddComment = async () => {
     if (!nickname) return alert("닉네임을 먼저 설정해야 댓글을 작성할 수 있습니다.");
     if (!commentContent && !commentImage) return alert("내용이나 사진을 입력해주세요.");
-    
+
     setIsCommentSubmitting(true);
-    
-    setTimeout(() => {
-      const now = new Date().toLocaleString('ko-KR', {
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
-      });
-
-      const newComment: Comment = {
-        id: Date.now(),
-        author: nickname, 
-        content: commentContent,
-        date: now,
-        imageUrl: commentImage,
-        replies: []
-      };
-
-      const updatedPost: Post = { ...post!, comments: [...(post!.comments || []), newComment] };
-      const savedPosts = JSON.parse(localStorage.getItem('upTick_posts') || '[]');
-      
-      localStorage.setItem('upTick_posts', JSON.stringify(savedPosts.map((p: any) => p.id === post!.id ? updatedPost : p)));
-      
-      setPost(updatedPost);
+    try {
+      await communityApi.createComment(postId, { content: commentContent, imageUrl: commentImage || undefined });
+      await reloadPost();
       setCommentContent('');
       setCommentImage('');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '댓글을 등록하지 못했습니다.');
+    } finally {
       setIsCommentSubmitting(false);
-    }, 400);
+    }
   };
 
-  const handleAddReply = (parentId: number) => {
+  const handleAddReply = async (parentId: number) => {
     if (!nickname) return alert("닉네임을 먼저 설정해야 대댓글을 작성할 수 있습니다.");
     if (!replyContent && !replyImage) return alert("내용이나 사진을 입력해주세요.");
-    
+
     setIsCommentSubmitting(true);
-    
-    setTimeout(() => {
-      const now = new Date().toLocaleString('ko-KR', {
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
-      });
-
-      const newReply: Comment = {
-        id: Date.now(),
-        author: nickname, 
-        content: replyContent,
-        date: now,
-        imageUrl: replyImage
-      };
-
-      const updatedComments = post!.comments.map(c => {
-        if (c.id === parentId) {
-          return { ...c, replies: [...(c.replies || []), newReply] };
-        }
-        return c;
-      });
-
-      const updatedPost: Post = { ...post!, comments: updatedComments };
-      const savedPosts = JSON.parse(localStorage.getItem('upTick_posts') || '[]');
-      localStorage.setItem('upTick_posts', JSON.stringify(savedPosts.map((p: any) => p.id === post!.id ? updatedPost : p)));
-      
-      setPost(updatedPost);
+    try {
+      await communityApi.createComment(postId, { content: replyContent, imageUrl: replyImage || undefined, parentId });
+      await reloadPost();
       setReplyContent('');
       setReplyImage('');
       setReplyingTo(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '답글을 등록하지 못했습니다.');
+    } finally {
       setIsCommentSubmitting(false);
-    }, 400);
+    }
   };
 
-  const handleDeleteComment = (commentId: number, parentId?: number) => {
+  const handleDeleteComment = async (commentId: number) => {
     if (!post) return;
     if (window.confirm('이 댓글을 삭제하시겠습니까?')) {
-      let updatedComments;
-
-      if (parentId) {
-        updatedComments = post.comments.map(c => {
-          if (c.id === parentId) {
-            return { ...c, replies: c.replies?.filter(r => r.id !== commentId) };
-          }
-          return c;
-        });
-      } else {
-        updatedComments = post.comments.filter(c => c.id !== commentId);
+      try {
+        await communityApi.deleteComment(commentId);
+        await reloadPost();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '댓글을 삭제하지 못했습니다.');
       }
-
-      const updatedPost = { ...post, comments: updatedComments };
-      const savedPosts = JSON.parse(localStorage.getItem('upTick_posts') || '[]');
-      localStorage.setItem('upTick_posts', JSON.stringify(savedPosts.map((p: Post) => p.id === post.id ? updatedPost : p)));
-      
-      setPost(updatedPost);
     }
   };
 
@@ -227,7 +163,7 @@ export default function PostDetail() {
       <div style={{ backgroundColor: '#fff', borderRadius: '24px', padding: '48px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)', marginBottom: '32px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
           <h1 style={{ fontSize: '28px', color: '#222', margin: 0 }}>{post.title}</h1>
-          {nickname === post.author && (
+          {post.canDelete && (
             <button 
               onClick={handleDeletePost}
               style={{ padding: '6px 12px', border: '1px solid #ff4d4f', backgroundColor: '#fff', color: '#ff4d4f', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}
@@ -238,14 +174,14 @@ export default function PostDetail() {
         </div>
 
         <div style={{ color: '#888', fontSize: '14px', marginBottom: '40px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #f0f0f0', paddingBottom: '20px' }}>
-          <span>작성자: <strong>{post.author}</strong> | {post.date}</span>
+          <span>작성자: <strong>{post.author}</strong> | {formatDate(post.date)}</span>
           <span>추천수: <strong style={{ color: '#4CAF4F' }}>{post.likes}</strong> | 조회수: {post.views}</span>
         </div>
 
         {post.imageUrl && (
           <div style={{ marginBottom: '40px', textAlign: 'center', backgroundColor: '#fdfdfd', borderRadius: '16px', padding: '20px', border: '1px solid #f5f5f5' }}>
             <img 
-              src={post.imageUrl} 
+              src={imageSrc(post.imageUrl)} 
               alt="첨부 이미지" 
               style={{ maxWidth: '100%', borderRadius: '12px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }} 
             />
@@ -333,7 +269,7 @@ export default function PostDetail() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ fontWeight: 'bold', color: '#222' }}>{comment.author}</span>
                     {/* ✨ 삭제 버튼을 닉네임 옆으로 복귀 (작은 사이즈) */}
-                    {nickname === comment.author && (
+                    {comment.canDelete && (
                       <button 
                         onClick={() => handleDeleteComment(comment.id)}
                         style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '12px', cursor: 'pointer', padding: 0 }}
@@ -342,7 +278,7 @@ export default function PostDetail() {
                       </button>
                     )}
                   </div>
-                  <span style={{ color: '#ccc', fontSize: '12px' }}>{comment.date}</span>
+                  <span style={{ color: '#ccc', fontSize: '12px' }}>{formatDate(comment.date)}</span>
                 </div>
                 
                 {/* 2. 댓글 본문 */}
@@ -352,7 +288,7 @@ export default function PostDetail() {
 
                 {/* 3. 댓글 첨부 이미지 */}
                 {comment.imageUrl && (
-                  <img src={comment.imageUrl} alt="댓글 이미지" style={{ marginTop: '12px', maxWidth: '200px', maxHeight: '200px', borderRadius: '8px', border: '1px solid #eee' }} />
+                  <img src={imageSrc(comment.imageUrl)} alt="댓글 이미지" style={{ marginTop: '12px', maxWidth: '200px', maxHeight: '200px', borderRadius: '8px', border: '1px solid #eee' }} />
                 )}
 
                 {/* ✨ 4. 하단 액션 버튼 (답글 달기만 남김) */}
@@ -409,16 +345,16 @@ export default function PostDetail() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <span style={{ fontWeight: 'bold', color: '#444', fontSize: '14px' }}>↳ {reply.author}</span>
                             {/* ✨ 대댓글 삭제 버튼도 닉네임 옆으로 복귀 */}
-                            {nickname === reply.author && (
+                            {reply.canDelete && (
                               <button 
-                                onClick={() => handleDeleteComment(reply.id, comment.id)}
+                                onClick={() => handleDeleteComment(reply.id)}
                                 style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '11px', cursor: 'pointer', padding: 0 }}
                               >
                                 삭제
                               </button>
                             )}
                           </div>
-                          <span style={{ color: '#ccc', fontSize: '11px' }}>{reply.date}</span>
+                          <span style={{ color: '#ccc', fontSize: '11px' }}>{formatDate(reply.date)}</span>
                         </div>
                         
                         <div style={{ fontSize: '14px', color: '#666', lineHeight: '1.5', paddingLeft: '18px', marginBottom: reply.imageUrl ? '8px' : '0' }}>
@@ -426,7 +362,7 @@ export default function PostDetail() {
                         </div>
                         
                         {reply.imageUrl && (
-                          <img src={reply.imageUrl} alt="대댓글 이미지" style={{ marginLeft: '18px', maxWidth: '150px', maxHeight: '150px', borderRadius: '6px', border: '1px solid #eee' }} />
+                          <img src={imageSrc(reply.imageUrl)} alt="대댓글 이미지" style={{ marginLeft: '18px', maxWidth: '150px', maxHeight: '150px', borderRadius: '6px', border: '1px solid #eee' }} />
                         )}
                       </div>
                     ))}
