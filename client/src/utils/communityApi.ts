@@ -13,7 +13,6 @@ export interface CommunityComment {
   content: string
   date: string
   imageUrl: string | null
-  isMine: boolean
   canDelete: boolean
   replies?: CommunityComment[]
 }
@@ -27,7 +26,6 @@ export interface CommunityPost {
   likes: number
   category: string
   imageUrl: string | null
-  isMine: boolean
   // 상세 조회에만 온다
   content?: string
   canDelete?: boolean
@@ -60,7 +58,8 @@ async function request<T>(path: string, init: { method?: string; body?: unknown 
 export const communityApi = {
   listPosts: () => request<CommunityPost[]>('/posts'),
   getPost: (id: number) => request<CommunityPost>(`/posts/${id}`),
-  addView: (id: number) => request<void>(`/posts/${id}/view`, { method: 'POST' }),
+  // 조회수는 서버가 1인 1회로 센다 — 이미 본 글이면 현재 값이 그대로 온다
+  addView: (id: number) => request<{ views: number }>(`/posts/${id}/view`, { method: 'POST' }),
   createPost: (body: { title: string; category: string; content: string; imageUrl?: string }) =>
     request<{ id: number }>('/posts', { method: 'POST', body }),
   deletePost: (id: number) => request<void>(`/posts/${id}`, { method: 'DELETE' }),
@@ -68,6 +67,34 @@ export const communityApi = {
   createComment: (postId: number, body: { content: string; imageUrl?: string; parentId?: number }) =>
     request<{ id: number }>(`/posts/${postId}/comments`, { method: 'POST', body }),
   deleteComment: (commentId: number) => request<void>(`/comments/${commentId}`, { method: 'DELETE' }),
+}
+
+/** 첨부 사진 정책 — 서버 COMMUNITY_POLICY 와 같은 값이어야 한다(어긋나면 서버가 400 으로 거른다) */
+export const IMAGE_POLICY = {
+  MAX_BYTES: 1024 * 1024,
+  MIME: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as readonly string[],
+}
+
+/**
+ * 고른 파일을 서버가 받는 data URL 로 바꾼다. 형식·크기를 보내기 전에 거른다 —
+ * 그냥 올리면 본문 한도(2MB)에 먼저 걸려 사용자는 사유를 알 수 없는 오류만 보게 된다.
+ */
+export function readImageFile(file: File): Promise<string> {
+  if (!IMAGE_POLICY.MIME.includes(file.type))
+    return Promise.reject(new Error('사진은 PNG·JPEG·GIF·WEBP 형식만 첨부할 수 있습니다'))
+  if (file.size > IMAGE_POLICY.MAX_BYTES)
+    return Promise.reject(
+      new Error(`사진 용량이 ${(file.size / 1024 / 1024).toFixed(1)}MB 입니다. 1MB 이하로 줄여주세요`),
+    )
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('사진을 읽지 못했습니다'))
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('사진을 읽지 못했습니다'))
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 /** 서버가 준 이미지 경로를 <img src> 로 쓸 수 있는 전체 주소로 */

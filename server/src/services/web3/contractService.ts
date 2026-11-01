@@ -440,6 +440,25 @@ export const recordSeed = async (
   await walletClient.writeContract(request)
 }
 
+/**
+ * 체인 호출을 요청 처리에서 떼어 낸다.
+ *
+ * 감사 기록·등록 해제처럼 사용자 응답의 내용을 바꾸지 않는 호출을 await 하면, 응답이
+ * Sepolia RPC 왕복(simulate+write)만큼 늦어진다. RPC 가 느릴 때는 viem 기본값
+ * (타임아웃 10초 × 재시도 3회)으로 수십 초까지 밀려 화면이 멈춘 것처럼 보인다.
+ * 더 나쁜 것은 await 한 호출이 던지면 그 앞의 DB 작업까지 실패로 되돌려 보낸다는 점이다.
+ * 그래서 DB 를 확정한 뒤 체인 호출은 분리해 보내고, 실패는 로그로만 남긴다.
+ */
+export const detachOnChain = (label: string, run: () => Promise<unknown>): void => {
+  void (async () => {
+    try {
+      await run()
+    } catch (err) {
+      console.error(`[Chain] ${label} 실패:`, (err as Error).message)
+    }
+  })()
+}
+
 // ─── MockTrade: 고액 거래 감사 로그 ──────────────────────────
 
 export const logTrade = async (

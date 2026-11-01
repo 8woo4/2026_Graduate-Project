@@ -7,7 +7,7 @@ import VirtualOrder from '../../models/trade/VirtualOrder'
 import User from '../../models/user/User'
 import { priceMap } from '../market/KisRealtime'
 import { QueryTypes } from 'sequelize'
-import { recordSeed, logTrade, getTradeNonce, verifyTradeSignature, buildTradeDescriptor } from '../web3/contractService'
+import { recordSeed, logTrade, getTradeNonce, verifyTradeSignature, buildTradeDescriptor, detachOnChain } from '../web3/contractService'
 import Wallet from '../../models/user/Wallet'
 import { TRADE_POLICY } from '../auth/tradeAnomalyService'
 import { recordTradeAuthAttempt } from '../auth/anomalyService'
@@ -23,6 +23,20 @@ export interface AccessContext {
 export const INITIAL_BALANCE = 10_000_000
 
 const FEE_RATE = 0.00015
+
+// 이미 계좌가 있다는 사실은 클라이언트가 "실패"와 구분해야 한다 — 재시도로 들어온 요청이면
+// 앞선 시도가 사실 성공한 것이므로, 화면은 다시 묻지 말고 개설 완료로 넘어가야 한다.
+export class AccountExistsError extends Error {
+    readonly code = 'ACCOUNT_EXISTS'
+    constructor() {
+        super('이미 모의투자 계좌가 존재합니다')
+        this.name = 'AccountExistsError'
+    }
+}
+
+// 체인 감사 기록은 사용자 응답과 무관하므로 detachOnChain 으로 떼어 보낸다.
+// DB 는 이미 커밋된 뒤라 기록이 늦거나 실패해도 거래 결과는 달라지지 않는다
+// (온체인 기록 누락 가능성은 논문 6.6.3 에 적어 둔 알려진 한계다).
 
 // ─── PIN 잠금 (in-memory) ────────────────────────────────────
 
@@ -98,7 +112,7 @@ export const changePin = async (userId: number, oldPin: string, newPin: string):
 
 export const openAccount = async (userId: number): Promise<VirtualAccount> => {
   const existing = await VirtualAccount.findOne({ where: { user_id: userId } })
-  if (existing) throw new Error('이미 모의투자 계좌가 존재합니다')
+  if (existing) throw new AccountExistsError()
 
   const account = await VirtualAccount.create({
     user_id: userId,
@@ -108,14 +122,11 @@ export const openAccount = async (userId: number): Promise<VirtualAccount> => {
     activated_at: new Date(),
   })
 
-  try {
+  detachOnChain('recordSeed', async () => {
     const wallet = await Wallet.findOne({ where: { user_id: userId } })
-    if (wallet) {
-      await recordSeed(wallet.address, BigInt(INITIAL_BALANCE))
-    }
-  } catch (err) {
-    console.error('[MockTrade] recordSeed 실패:', err)
-  }
+    if (!wallet) return
+    await recordSeed(wallet.address, BigInt(INITIAL_BALANCE))
+  })
 
   return account
 }
@@ -383,11 +394,9 @@ export const buyStock = async (params: BuyParams) => {
     await t.commit()
 
     if (signed) {
-      try {
-        await logTrade(signed.walletAddress, stockCode, 'buy', BigInt(Math.round(totalCost)), signed.nonce)
-      } catch (err) {
-        console.error('[MockTrade] logTrade 실패:', err)
-      }
+      detachOnChain('logTrade(buy)', () =>
+        logTrade(signed.walletAddress, stockCode, 'buy', BigInt(Math.round(totalCost)), signed.nonce),
+      )
     }
 
     return { order, remainingBalance: Number(account.seed_balance) }
@@ -495,11 +504,9 @@ export const sellStock = async (params: SellParams) => {
     await t.commit()
 
     if (signed) {
-      try {
-        await logTrade(signed.walletAddress, stockCode, 'sell', BigInt(Math.round(totalAmount)), signed.nonce)
-      } catch (err) {
-        console.error('[MockTrade] logTrade 실패:', err)
-      }
+      detachOnChain('logTrade(sell)', () =>
+        logTrade(signed.walletAddress, stockCode, 'sell', BigInt(Math.round(totalAmount)), signed.nonce),
+      )
     }
 
     return {

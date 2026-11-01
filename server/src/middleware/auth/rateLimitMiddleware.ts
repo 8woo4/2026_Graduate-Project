@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import { logAnomaly } from '../../services/auth/anomalyService'
+import { recordCommunityAbuse } from '../../services/community/communityAbuseService'
 
 interface RateLimitEntry {
   count: number
@@ -12,6 +13,7 @@ const loginStore = new Map<string, RateLimitEntry>()
 const emailStore = new Map<string, RateLimitEntry>()
 const smsStore = new Map<string, RateLimitEntry>()
 const communityStore = new Map<string, RateLimitEntry>()
+const communityViewStore = new Map<string, RateLimitEntry>()
 
 const getIp = (req: Request): string =>
   (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ||
@@ -96,12 +98,39 @@ export const emailCodeRateLimiter = createLimiter(emailStore, {
   message: '이메일 인증 요청이 너무 많습니다. 잠시 후 다시 시도해주세요',
 })
 
+// 리미터가 막은 요청은 커뮤니티 컨트롤러에 닿지 못해 기록이 남지 않는다 — 여기서 남긴다.
+// req.user 는 라우터가 isAuthenticated 뒤에 리미터를 두므로 채워져 있다(없으면 IP 로 센다).
+const recordCommunitySpam = (ip: string, req: Request, info: string): void => {
+  const actor = (req as any).user
+  void recordCommunityAbuse({
+    userId: actor ? Number(actor.id) : null,
+    email: actor?.email ?? null,
+    ip,
+    userAgent: req.headers['user-agent'] ?? null,
+    threat: 'SPAM',
+    method: req.method,
+    path: req.originalUrl.split('?')[0].slice(0, 120),
+    info,
+  }).catch(() => undefined)
+}
+
 // 커뮤니티 쓰기 Rate Limiter: 분당 20회 초과 시 5분 차단 (글·댓글·추천·삭제 — 도배 방지)
 export const communityWriteRateLimiter = createLimiter(communityStore, {
   maxAttempts: 20,
   windowMs: 60 * 1000,
   blockMs: 5 * 60 * 1000,
   message: '커뮤니티 요청이 너무 많습니다. 잠시 후 다시 시도해주세요',
+  onBlock: (ip, req) => recordCommunitySpam(ip, req, '쓰기 한도 20회/분 초과'),
+})
+
+// 커뮤니티 조회 Rate Limiter: 쓰기보다 느슨하게 둔다 — 목록을 훑는 정상 사용자가 걸리면 안 된다.
+// 분당 60개 글을 여는 것은 사람의 읽기 속도가 아니므로 그 선에서 자동화로 본다.
+export const communityViewRateLimiter = createLimiter(communityViewStore, {
+  maxAttempts: 60,
+  windowMs: 60 * 1000,
+  blockMs: 60 * 1000,
+  message: '게시글 조회가 너무 많습니다. 잠시 후 다시 시도해주세요',
+  onBlock: (ip, req) => recordCommunitySpam(ip, req, '조회 한도 60회/분 초과'),
 })
 
 // SMS 인증 Rate Limiter: 분당 3회 제한

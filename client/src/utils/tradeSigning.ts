@@ -93,14 +93,27 @@ export async function signedFetch(url: string, init: RequestInit = {}): Promise<
 
   // 본문은 문자열로 고정한 뒤 그 문자열에 서명하고, 같은 문자열을 전송한다.
   const body = init.body == null ? '' : typeof init.body === 'string' ? init.body : JSON.stringify(init.body)
-  const signed = await buildSignature(body)
-  if (!signed) return fetch(url, init)
 
-  return fetch(url, {
-    ...init,
-    // 본문이 없는 요청(예: DELETE, 파라미터 없는 POST)도 빈 문자열에 서명하므로
-    // body 를 생략하지 않고 그대로 맞춰 보낸다 — 서버 rawBody 와 일치시키기 위함.
-    body: body === '' ? undefined : body,
-    headers: { ...(init.headers as Record<string, string> | undefined), ...signed },
-  })
+  const send = async (): Promise<Response | null> => {
+    const signed = await buildSignature(body)
+    if (!signed) return null
+    return fetch(url, {
+      ...init,
+      // 본문이 없는 요청(예: DELETE, 파라미터 없는 POST)도 빈 문자열에 서명하므로
+      // body 를 생략하지 않고 그대로 맞춰 보낸다 — 서버 rawBody 와 일치시키기 위함.
+      body: body === '' ? undefined : body,
+      headers: { ...(init.headers as Record<string, string> | undefined), ...signed },
+    })
+  }
+
+  const first = await send()
+  if (!first) return fetch(url, init)
+  if (first.status !== 401) return first
+
+  // 액세스 토큰 만료로 막힌 것이면 갱신 후 한 번만 다시 보낸다. 재시도는 send() 를 다시
+  // 타므로 timestamp·nonce 가 새로 만들어진다 — 같은 서명을 재사용하면 서버가 재전송으로
+  // 차단하기 때문에, 헤더를 돌려쓰지 않는 이 경로로만 재시도해야 한다.
+  const { refreshSession } = await import('./authRetry')
+  if (!(await refreshSession())) return first
+  return (await send()) ?? first
 }

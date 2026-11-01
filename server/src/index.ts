@@ -61,6 +61,16 @@ const PORT = process.env.PORT || 3000
 // 커뮤니티는 이미지(data URL, 최대 1MB)를 본문에 실으므로 이 경로만 한도를 넓힌다.
 // 먼저 파싱된 본문은 아래 전역 파서가 다시 읽지 않는다. (HMAC 대상이 아니라 rawBody 불필요)
 app.use('/api/community', express.json({ limit: '2mb' }))
+// 전역 에러 핸들러가 없어 본문이 한도를 넘으면 express 기본 HTML 오류가 나가고, 화면은 사유를
+// 읽지 못해 "요청을 처리하지 못했습니다" 만 띄웠다. 이 구간만 JSON 으로 돌려준다.
+app.use('/api/community', (err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!err) return next()
+  if (err.type === 'entity.too.large')
+    return res.status(413).json({ message: '첨부 사진이 너무 큽니다. 1MB 이하 이미지를 사용해주세요' })
+  if (err instanceof SyntaxError || err.type === 'entity.parse.failed')
+    return res.status(400).json({ message: '잘못된 요청 형식입니다' })
+  return next(err)
+})
 // HMAC 요청서명 검증을 위해 raw body를 보존 (서명 재계산 시 파싱 전 원본 필요)
 app.use(express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8') } }))
 app.use(express.urlencoded({ extended: true }))

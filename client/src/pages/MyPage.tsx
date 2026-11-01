@@ -728,8 +728,10 @@ export default function MyPage() {
       setWithdrawLoading(true)
       setWithdrawError('')
       const res = await fetch(`${API}/withdraw`, { method: 'DELETE', credentials: 'include' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.message)
+      // 본문이 비었거나 JSON 이 아니면 res.json() 이 던진다 — 탈퇴에 성공하고도 화면이
+      // 그대로 남아 "아무 일도 안 일어난" 것처럼 보이므로, 성공 판정은 상태 코드로만 한다.
+      const data = await res.json().catch(() => ({} as { message?: string }))
+      if (!res.ok) throw new Error(data.message ?? '탈퇴 처리에 실패했습니다')
       clearSession()
       window.location.href = '/'
     } catch (err: any) {

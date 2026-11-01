@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { isAuthenticated } from '../../middleware/auth/authMiddleware'
-import { communityWriteRateLimiter } from '../../middleware/auth/rateLimitMiddleware'
+import { communityViewRateLimiter, communityWriteRateLimiter } from '../../middleware/auth/rateLimitMiddleware'
 import * as ctrl from '../../controllers/community/communityController'
 
 const router = Router()
@@ -14,7 +14,7 @@ router.use(isAuthenticated)
 
 router.get('/posts', ctrl.listPosts)                                                    // 목록
 router.get('/posts/:id', ctrl.getPost)                                                  // 상세(댓글 포함)
-router.post('/posts/:id/view', ctrl.addView)                                            // 조회수 +1
+router.post('/posts/:id/view', communityViewRateLimiter, ctrl.addView)                  // 조회수(1인 1회)
 router.post('/posts', communityWriteRateLimiter, ctrl.createPost)                       // 작성
 router.delete('/posts/:id', communityWriteRateLimiter, ctrl.deletePost)                 // 삭제(작성자·관리자)
 router.post('/posts/:id/like', communityWriteRateLimiter, ctrl.likePost)                // 추천(1인 1회)

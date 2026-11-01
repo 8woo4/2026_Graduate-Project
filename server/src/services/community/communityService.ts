@@ -3,6 +3,7 @@ import sequelize from '../../config/database'
 import Post from '../../models/community/Post'
 import Comment from '../../models/community/Comment'
 import PostLike from '../../models/community/PostLike'
+import PostView from '../../models/community/PostView'
 import { CommunityError, CommentInput, PostInput, decodeImage } from './communityValidation'
 
 // ─────────────────────────────────────────────────────────────
@@ -40,7 +41,8 @@ const findPost = async (postId: number): Promise<Post> => {
   return post
 }
 
-const serializePost = (p: Post, actor: Actor) => ({
+// 소유 여부는 canDelete(상세 응답)로만 내린다 — 목록에는 삭제 버튼이 없어 소유 정보가 필요 없다
+const serializePost = (p: Post) => ({
   id: p.id,
   title: p.title,
   author: p.author,
@@ -49,7 +51,6 @@ const serializePost = (p: Post, actor: Actor) => ({
   likes: p.likes ?? 0,
   category: p.category,
   imageUrl: p.get('has_image') ? postImagePath(p.id) : null,
-  isMine: p.user_id !== null && Number(p.user_id) === Number(actor.id),
 })
 
 const serializeComment = (c: Comment, actor: Actor) => ({
@@ -58,16 +59,15 @@ const serializeComment = (c: Comment, actor: Actor) => ({
   content: c.content,
   date: c.date,
   imageUrl: c.get('has_image') ? commentImagePath(c.id) : null,
-  isMine: c.user_id !== null && Number(c.user_id) === Number(actor.id),
   canDelete: canModify(actor, c.user_id),
 })
 
-export const listPosts = async (actor: Actor) => {
+export const listPosts = async () => {
   const posts = await Post.findAll({
     attributes: [...LIST_ATTRS, [HAS_IMAGE, 'has_image']],
     order: [['id', 'DESC']],
   })
-  return posts.map((p) => serializePost(p, actor))
+  return posts.map(serializePost)
 }
 
 export const getPost = async (actor: Actor, postId: number) => {
@@ -89,7 +89,7 @@ export const getPost = async (actor: Actor, postId: number) => {
   }))
 
   return {
-    ...serializePost(post, actor),
+    ...serializePost(post),
     content: post.content,
     canDelete: canModify(actor, post.user_id),
     liked: Boolean(liked),
@@ -113,14 +113,32 @@ export const createPost = async (actor: Actor, input: PostInput) => {
 export const deletePost = async (actor: Actor, postId: number) => {
   const post = await Post.findByPk(postId, { attributes: ['id', 'user_id'] })
   if (!post) throw new CommunityError(404, '게시글을 찾을 수 없습니다')
-  if (!canModify(actor, post.user_id)) throw new CommunityError(403, '본인이 작성한 게시글만 삭제할 수 있습니다')
+  if (!canModify(actor, post.user_id))
+    throw new CommunityError(403, '본인이 작성한 게시글만 삭제할 수 있습니다',
+      'IDOR', `게시글 ${postId} (요청 ${actor.id} → 소유 ${post.user_id ?? '없음'})`)
   // 댓글·추천은 FK(ON DELETE CASCADE)로 함께 지워진다
   await post.destroy()
 }
 
-export const addView = async (postId: number) => {
-  const [affected] = await Post.update({ views: literal('COALESCE(views, 0) + 1') as any }, { where: { id: postId } })
-  if (affected === 0) throw new CommunityError(404, '게시글을 찾을 수 없습니다')
+/**
+ * 조회수 — (게시글, 사용자) 1회만 센다. 중복 방지가 없으면 새로고침만으로 '조회순' 정렬을
+ * 끌어올릴 수 있다. 추천과 같은 방식으로 DB(post_views 복합 기본키)가 1회를 보장한다.
+ * 그래서 views 는 요청 수가 아니라 고유 조회자 수다. 이미 본 글이면 현재 값을 그대로 준다.
+ */
+export const addView = async (actor: Actor, postId: number) => {
+  return sequelize.transaction(async (t) => {
+    const post = await Post.findByPk(postId, { attributes: ['id', 'views'], transaction: t, lock: t.LOCK.UPDATE })
+    if (!post) throw new CommunityError(404, '게시글을 찾을 수 없습니다')
+    try {
+      await PostView.create({ post_id: postId, user_id: actor.id }, { transaction: t })
+    } catch (err) {
+      // 중복은 정상 흐름이다 — 조회수를 올리지 않고 현재 값만 돌려준다
+      if (err instanceof UniqueConstraintError) return { views: post.views ?? 0 }
+      throw err
+    }
+    await post.increment('views', { by: 1, transaction: t })
+    return { views: (post.views ?? 0) + 1 }
+  })
 }
 
 export const likePost = async (actor: Actor, postId: number) => {
@@ -164,7 +182,9 @@ export const createComment = async (actor: Actor, postId: number, input: Comment
 export const deleteComment = async (actor: Actor, commentId: number) => {
   const comment = await Comment.findByPk(commentId, { attributes: ['id', 'user_id'] })
   if (!comment) throw new CommunityError(404, '댓글을 찾을 수 없습니다')
-  if (!canModify(actor, comment.user_id)) throw new CommunityError(403, '본인이 작성한 댓글만 삭제할 수 있습니다')
+  if (!canModify(actor, comment.user_id))
+    throw new CommunityError(403, '본인이 작성한 댓글만 삭제할 수 있습니다',
+      'IDOR', `댓글 ${commentId} (요청 ${actor.id} → 소유 ${comment.user_id ?? '없음'})`)
   // 대댓글은 FK(ON DELETE CASCADE)로 함께 지워진다
   await comment.destroy()
 }
@@ -175,5 +195,10 @@ export const getImage = async (kind: 'posts' | 'comments', id: number) => {
     ? await Post.findByPk(id, { attributes: ['image_url'] })
     : await Comment.findByPk(id, { attributes: ['image_url'] })
   if (!row?.image_url) throw new CommunityError(404, '이미지를 찾을 수 없습니다')
-  return decodeImage(row.image_url)
+  try {
+    return decodeImage(row.image_url)
+  } catch {
+    // 저장 시 검증을 통과한 값이 지금 깨졌다면 DB 쪽 문제다 — 공격 정황(threat)으로 세지 않는다
+    throw new CommunityError(500, '이미지를 읽을 수 없습니다')
+  }
 }

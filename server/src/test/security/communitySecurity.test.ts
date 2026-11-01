@@ -13,6 +13,8 @@ import { UniqueConstraintError } from 'sequelize'
 //   4) 추천 중복 — 같은 사용자가 추천 수를 계속 올리기
 //   5) 답글 경로 — 다른 게시글의 댓글·대댓글에 답글 달기
 //   6) 인증 배선 — 로그인 없이 쓰기·조회 요청
+//   7) 조회수 조작 — 같은 사용자가 새로고침으로 조회수·'조회순' 정렬 올리기
+//   8) 탐지 기록 — 막아낸 시도가 anomaly_logs 에 남는지(남지 않으면 대시보드·논문에 수치가 0 이다)
 //
 // 모델·DB 는 스텁으로 대체해 DB 없이 돌린다. 인증 미들웨어는 실제 코드를 쓴다(쿠키가 없으면 DB 전에 401).
 // 실행: cd server && npx ts-node src/test/security/communitySecurity.test.ts
@@ -29,7 +31,12 @@ function check(name: string, ok: boolean, detail = ''): void {
 
 // ── 스텁: 메모리 위의 posts·comments·post_likes ──────────────────
 type Row = Record<string, any>
-const db = { posts: new Map<number, Row>(), comments: new Map<number, Row>(), likes: new Set<string>() }
+const db = {
+  posts: new Map<number, Row>(),
+  comments: new Map<number, Row>(),
+  likes: new Set<string>(),
+  views: new Set<string>(),
+}
 
 const rowOf = (table: Map<number, Row>, r: Row) => ({
   ...r,
@@ -65,6 +72,35 @@ stubModule('../../models/community/PostLike', {
       db.likes.add(key)
     },
   },
+})
+
+stubModule('../../models/community/PostView', {
+  default: {
+    create: async (r: Row) => {
+      const key = `${r.post_id}:${r.user_id}`
+      if (db.views.has(key)) throw new UniqueConstraintError({ message: 'dup' } as any)
+      db.views.add(key)
+    },
+  },
+})
+
+// 탐지 기록 경로: AnomalyLog·관리자 조회·메일·IP 지오코딩을 모두 메모리로 바꾼다
+const logged: Row[] = []
+const mailed: Row[] = []
+stubModule('../../models/auth/AnomalyLog', {
+  default: { create: async (r: Row) => { logged.push(r); return r } },
+})
+stubModule('../../models/user/User', {
+  default: {
+    findOne: async () => ({ email: 'admin@example.test', role: 'admin' }),
+    findByPk: async () => null,
+  },
+})
+stubModule('../../services/auth/emailService', {
+  sendAnomalyAlertEmail: async (to: string, body: Row) => { mailed.push({ to, ...body }) },
+})
+stubModule('../../utils/getLocationFromIp', {
+  getLocationFromIp: async () => ({ city: 'Seoul', region: 'Seoul', country: 'KR' }),
 })
 
 const v = require('../../services/community/communityValidation')
@@ -154,9 +190,9 @@ async function main(): Promise<void> {
   const bobAsAlice = { id: 2, nickname: 'alice', role: 'user' }
   const admin = { id: 9, nickname: 'admin', role: 'admin' }
   const reset = () => {
-    db.posts.clear(); db.comments.clear(); db.likes.clear()
-    db.posts.set(10, { id: 10, user_id: 1, author: 'alice', likes: 0, image_url: null })
-    db.posts.set(20, { id: 20, user_id: 1, author: 'alice', likes: 0, image_url: null })
+    db.posts.clear(); db.comments.clear(); db.likes.clear(); db.views.clear()
+    db.posts.set(10, { id: 10, user_id: 1, author: 'alice', likes: 0, views: 0, image_url: null })
+    db.posts.set(20, { id: 20, user_id: 1, author: 'alice', likes: 0, views: 0, image_url: null })
     db.comments.set(1, { id: 1, post_id: 10, user_id: 1, parent_id: null, author: 'alice' })
     db.comments.set(2, { id: 2, post_id: 10, user_id: 1, parent_id: 1, author: 'alice' })
     db.comments.set(3, { id: 3, post_id: 20, user_id: 1, parent_id: null, author: 'alice' })
@@ -252,10 +288,110 @@ async function main(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────
+  // 7) 조회수 조작 — 같은 사용자의 재조회는 올리지 않는다
+  // ─────────────────────────────────────────────
+  reset()
+  const view1 = await service.addView(alice, 10)
+  const view2 = await service.addView(alice, 10)
+  // 다른 사용자가 조회하기 전에 확인한다 — 뒤에서 재면 정상 증가와 구분되지 않는다
+  const viewsAfterRepeat = db.posts.get(10)!.views
+  const viewBlocked = view2.views === 1 && viewsAfterRepeat === 1
+  const view3 = await service.addView(bobAsAlice, 10)
+  check('첫 조회는 +1', view1.views === 1)
+  check('같은 사용자 재조회는 조회수를 올리지 않는다', viewBlocked, `views=${viewsAfterRepeat}`)
+  check('다른 사용자 조회는 +1', view3.views === 2)
+  check('없는 글 조회 → 404', await rejectsAsync(service.addView(alice, 999), 404))
+
+  // ─────────────────────────────────────────────
+  // 8) 탐지 기록 — 실제 컨트롤러를 통과시켜 anomaly_logs 행을 확인한다
+  //
+  // 서비스 단위 검증만으로는 "거부했다"까지만 증명된다. 기록이 빠지면 대시보드·논문의
+  // 수치가 0 이 되므로, 컨트롤러 → 기록 서비스 → AnomalyLog 경로를 함께 통과시킨다.
+  // ─────────────────────────────────────────────
+  const abuse = require('../../services/community/communityAbuseService')
+  const ctrl = require('../../controllers/community/communityController')
+  const PREFIX = abuse.COMMUNITY_DETAIL_PREFIX
+
+  const logApp = express()
+  logApp.use(express.json())
+  // 인증은 6) 에서 이미 검증했다 — 여기서는 로그인된 상태를 가정하고 기록 경로만 본다
+  logApp.use((req: any, _res: any, next: any) => { req.user = bobAsAlice; next() })
+  logApp.delete('/posts/:id', ctrl.deletePost)
+  logApp.post('/posts', ctrl.createPost)
+  const logServer = await new Promise<any>((resolve) => {
+    const s = logApp.listen(0, '127.0.0.1', () => resolve(s))
+  })
+  const logUrl = `http://127.0.0.1:${logServer.address().port}`
+
+  // 기록은 응답을 기다리지 않고(void) 진행되므로 행이 도착할 때까지 짧게 폴링한다
+  const waitForLog = async (n: number): Promise<boolean> => {
+    for (let i = 0; i < 60; i++) {
+      if (logged.length >= n) return true
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    return false
+  }
+  const lastLog = () => logged[logged.length - 1] ?? {}
+
+  let idorLogged = false
+  let imageLogged = false
+  let dedupeWorks = false
+  try {
+    reset()
+    logged.length = 0
+    mailed.length = 0
+    abuse.resetCommunityAbuseStateForTest()
+
+    // (1) 남의 글 삭제 시도 → 403 + IDOR 기록 + 관리자 메일
+    const r1 = await fetch(`${logUrl}/posts/10`, { method: 'DELETE' })
+    idorLogged = (await waitForLog(1)) && String(lastLog().detail ?? '').startsWith(PREFIX.IDOR)
+    check('IDOR 시도가 403 으로 거부된다', r1.status === 403, `status=${r1.status}`)
+    check('IDOR 시도가 anomaly_logs 에 기록된다', idorLogged, `detail=${lastLog().detail ?? '없음'}`)
+    check('기록 유형이 COMMUNITY_ABUSE 다', lastLog().anomaly_type === 'COMMUNITY_ABUSE')
+    check('IDOR 기록의 action 은 ALERT 다', lastLog().action === 'ALERT')
+    check('IDOR 기록에 요청자 user_id 가 남는다', Number(lastLog().user_id) === bobAsAlice.id)
+    check('IDOR 은 관리자 메일로도 알린다', mailed.length === 1, `메일=${mailed.length}건`)
+    check('기록에 사용자 입력 원문이 들어가지 않는다', !String(lastLog().detail ?? '').includes('alice'))
+
+    // (2) 같은 주체·같은 종류의 연속 시도는 중복 창 안에서 1건으로 센다
+    const before = logged.length
+    await fetch(`${logUrl}/posts/10`, { method: 'DELETE' })
+    await new Promise((r) => setTimeout(r, 120))
+    dedupeWorks = logged.length === before
+    check('중복 창 안의 반복 시도는 1건으로 센다', dedupeWorks, `추가=${logged.length - before}건`)
+
+    // (3) 이미지 위장 첨부 → 400 + IMAGE_FORGERY 기록
+    abuse.resetCommunityAbuseStateForTest()
+    const svg = `data:image/svg+xml;base64,${b64(Buffer.from('<svg onload="alert(1)"/>'))}`
+    const r2 = await fetch(`${logUrl}/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...base, imageUrl: svg }),
+    })
+    imageLogged = (await waitForLog(2)) && String(lastLog().detail ?? '').startsWith(PREFIX.IMAGE_FORGERY)
+    check('이미지 위장이 400 으로 거부된다', r2.status === 400, `status=${r2.status}`)
+    check('이미지 위장이 anomaly_logs 에 기록된다', imageLogged, `detail=${lastLog().detail ?? '없음'}`)
+    check('이미지 위장은 메일을 보내지 않는다(경보 피로 방지)', mailed.length === 1)
+
+    // (4) 정상 입력 실수는 기록하지 않는다 — 오탐이 집계를 오염시키면 안 된다
+    const beforeFp = logged.length
+    const r3 = await fetch(`${logUrl}/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...base, title: 'a'.repeat(101) }),
+    })
+    await new Promise((r) => setTimeout(r, 120))
+    check('제목 길이 초과는 400 이지만 기록하지 않는다',
+      r3.status === 400 && logged.length === beforeFp, `추가=${logged.length - beforeFp}건`)
+  } finally {
+    await new Promise<void>((resolve) => logServer.close(() => resolve()))
+  }
+
+  // ─────────────────────────────────────────────
   // 결과 출력
   // ─────────────────────────────────────────────
-  const attackTotal = imageAttacks.length + inputAttacks.length + idorCases.length + 1 + replyCases.length + routes.length
-  const attackBlocked = imgBlocked + inputBlocked + idorBlocked + (dup ? 1 : 0) + replyBlocked + authBlocked
+  const attackTotal = imageAttacks.length + inputAttacks.length + idorCases.length + 1 + replyCases.length + routes.length + 1
+  const attackBlocked = imgBlocked + inputBlocked + idorBlocked + (dup ? 1 : 0) + replyBlocked + authBlocked + (viewBlocked ? 1 : 0)
   console.log('')
   console.log('[보안 테스트] 커뮤니티')
   console.log(`총 공격 시도: ${attackTotal}회 | 차단: ${attackBlocked}회 | 탐지율: ${((attackBlocked / attackTotal) * 100).toFixed(0)}%`)
@@ -265,6 +401,8 @@ async function main(): Promise<void> {
   console.log(`- 추천 중복 차단       : ${dup ? 1 : 0}/1`)
   console.log(`- 답글 경로 거절       : ${replyBlocked}/${replyCases.length}`)
   console.log(`- 비로그인 요청 거절   : ${authBlocked}/${routes.length}`)
+  console.log(`- 조회수 조작 차단     : ${viewBlocked ? 1 : 0}/1 (같은 사용자 재조회)`)
+  console.log(`- 탐지 기록(anomaly_logs): IDOR ${idorLogged ? '기록' : '누락'} · 이미지 위장 ${imageLogged ? '기록' : '누락'} · 중복 억제 ${dedupeWorks ? '동작' : '실패'}`)
 
   if (failures.length > 0) {
     console.log('\n[실패 항목]')

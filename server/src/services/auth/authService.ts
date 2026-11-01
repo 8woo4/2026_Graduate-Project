@@ -16,6 +16,7 @@ import {
   verifySignature as contractVerifySignature,
   buildRegisterMessage,
   hasNonceHistory,
+  detachOnChain,
 } from '../web3/contractService'
 import { sendVerificationEmail } from './emailService'
 import { sendVerificationSms } from './smsService'
@@ -496,35 +497,53 @@ export const withdraw = async (userId: number) => {
   const user = await User.findByPk(userId)
   if (!user) throw new Error('유저를 찾을 수 없습니다')
 
-  const wallet = await Wallet.findOne({
-    where: { user_id: userId, is_primary: true },
-  })
+  // is_primary 로 좁히지 않는다 — wallets.user_id 가 unique(1유저 1지갑)라 한 행뿐이고,
+  // 플래그가 어긋난 행이 있으면 지갑이 통째로 누락돼 해제도 기록도 되지 않는다.
+  const wallet = await Wallet.findOne({ where: { user_id: userId } })
+  const walletAddress = wallet?.address
 
-  // 온체인 등록 해제
-  if (wallet) {
-    await unregisterWallet(wallet.address)
+  // 탈퇴는 셋이 함께 끝나야 한다. 중간에 끊기면 "개인정보는 지웠는데 지갑은 남은" 반쪽
+  // 상태가 되고, 그 상태는 사용자가 다시 시도해서 고칠 수 없다.
+  const t = await sequelize.transaction()
+  try {
+    // withdrawn_users에 개인정보 이관 — 지갑 주소도 여기 보존된다. 재가입 차단(30일)과
+    // 이후의 지갑 재사용 금지 판정이 이 기록을 근거로 하므로, wallets 행을 지워도 안전하다.
+    await WithdrawnUser.create({
+      original_user_id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone ?? undefined,
+      wallet_address: walletAddress ?? undefined,
+      withdrawn_at: new Date(),
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일 후
+      is_deleted: false,
+    }, { transaction: t })
+
+    // users 테이블 개인정보 마스킹
+    await user.update({
+      email: `withdrawn_${user.id}@deleted.com`,
+      name: '탈퇴회원',
+      phone: null,
+      status: 'withdrawn',
+      deleted_at: new Date(),
+    }, { transaction: t })
+
+    // 지갑 연결 해제. 이메일·이름·번호는 마스킹하면서 지갑 주소만 평문으로 남겨 두면
+    // 탈퇴 계정과 지갑의 연결이 그대로 보존된다(지갑 주소도 식별자다).
+    if (wallet) await wallet.destroy({ transaction: t })
+
+    await t.commit()
+  } catch (err) {
+    await t.rollback()
+    throw err
   }
 
-  // withdrawn_users에 개인정보 이관
-  await WithdrawnUser.create({
-    original_user_id: user.id,
-    email: user.email,
-    name: user.name,
-    phone: user.phone ?? undefined,
-    wallet_address: wallet?.address ?? undefined,
-    withdrawn_at: new Date(),
-    expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30일 후
-    is_deleted: false,
-  })
-
-  // users 테이블 개인정보 마스킹
-  await user.update({
-    email: `withdrawn_${user.id}@deleted.com`,
-    name: '탈퇴회원',
-    phone: null,
-    status: 'withdrawn',
-    deleted_at: new Date(),
-  })
+  // 온체인 등록 해제는 DB 확정 뒤에 떼어 보낸다. await 하면 응답이 Sepolia RPC 왕복만큼
+  // 늦어져 화면이 멈춘 것처럼 보이고, 호출이 실패하면 탈퇴 전체가 거부돼 사용자가
+  // 계정을 지울 수조차 없게 된다. 개인정보 삭제가 외부 체인 상태에 묶여서는 안 된다.
+  if (walletAddress) {
+    detachOnChain('unregisterWallet', () => unregisterWallet(walletAddress))
+  }
 
   return true
 }

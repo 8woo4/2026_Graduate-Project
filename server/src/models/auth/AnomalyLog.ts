@@ -4,7 +4,8 @@ import sequelize from '../../config/database'
 // DB 마이그레이션: src/database/migrations/20260730_anomaly_type_hmac.sql, 20260730_inference_logs.sql,
 //                  20260801_anomaly_type_trade.sql, 20260826_anomaly_type_canary.sql,
 //                  20260929_anomaly_type_bot_behavior.sql, 20261001_wallet_nonce_device_links.sql, 20261001_ledger_anchor.sql,
-//                  20261004_anomaly_type_union.sql, 20261016_anomaly_type_privilege.sql
+//                  20261004_anomaly_type_union.sql, 20261016_anomaly_type_privilege.sql,
+//                  20261028_anomaly_type_community.sql
 export type AnomalyType =
   | 'BRUTE_FORCE'
   | 'ABNORMAL_TIME'
@@ -39,6 +40,7 @@ export type AnomalyType =
   | 'BEHAVIOR_BIOMETRIC_MISMATCH' // 행동 생체인식 — 사용자별 프로필 대비 유사도 미달(관측 신호, 토글 시 재인증)
   | 'DEVICE_FINGERPRINT_MISMATCH' // 신뢰 기기의 하드웨어 핑거프린트(캔버스·WebGL·오디오·폰트·타임존) 변화(관측 신호)
   | 'PRIVILEGE_ESCALATION'        // 일반 계정의 관리자 API 호출·관리자 화면 진입 시도
+  | 'COMMUNITY_ABUSE'             // 커뮤니티 남용 — 남의 글·댓글 삭제 시도(IDOR)·이미지 위장 첨부·도배
 export type AnomalyAction = 'ALERT' | 'BLOCK' | 'LOCK'
 
 interface AnomalyLogAttributes {
@@ -115,6 +117,7 @@ AnomalyLog.init(
         'BEHAVIOR_BIOMETRIC_MISMATCH',
         'DEVICE_FINGERPRINT_MISMATCH',
         'PRIVILEGE_ESCALATION',
+        'COMMUNITY_ABUSE',
       ),
       allowNull: false,
     },

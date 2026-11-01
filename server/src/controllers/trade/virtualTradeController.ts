@@ -56,7 +56,9 @@ export const openAccount = async (req: Request, res: Response) => {
       balance: Number(account.seed_balance),
     })
   } catch (err: any) {
-    res.status(400).json({ message: err.message })
+    // code 를 함께 내려 화면이 "이미 개설됨"과 "개설 실패"를 구분하게 한다 —
+    // 메시지 문구로 가르면 문구를 손볼 때마다 화면이 조용히 깨진다.
+    res.status(400).json({ message: err.message, ...(err.code ? { code: err.code } : {}) })
   }
 }
 

@@ -2,7 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useRef, type ChangeEvent } from 'react';
 
 import { API_BASE } from '../utils/api'
-import { communityApi, formatDate, imageSrc, type CommunityPost } from '../utils/communityApi'
+import { communityApi, formatDate, imageSrc, readImageFile, type CommunityPost } from '../utils/communityApi'
 
 export default function PostDetail() {
   const { id } = useParams<{ id: string }>();
@@ -39,8 +39,9 @@ export default function PostDetail() {
       .then(async (found) => {
         if (!hasIncremented.current) {
           hasIncremented.current = true;
-          await communityApi.addView(postId).catch(() => undefined);
-          found = { ...found, views: found.views + 1 };
+          // 조회수는 서버가 1인 1회로 센다 — 돌려받은 값을 그대로 쓴다(이미 본 글이면 그대로)
+          const counted = await communityApi.addView(postId).catch(() => null);
+          if (counted) found = { ...found, views: counted.views };
         }
         setPost(found);
       })
@@ -89,15 +90,19 @@ export default function PostDetail() {
     }
   };
 
-  const handleCommentImageChange = (e: ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (isReply) setReplyImage(reader.result as string);
-        else setCommentImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+  const handleCommentImageChange = async (e: ChangeEvent<HTMLInputElement>, isReply: boolean = false) => {
+    const input = e.target;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await readImageFile(file);
+      if (isReply) setReplyImage(dataUrl);
+      else setCommentImage(dataUrl);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '사진을 첨부하지 못했습니다');
+      input.value = '';
+      if (isReply) setReplyImage('');
+      else setCommentImage('');
     }
   };
 
@@ -193,25 +198,33 @@ export default function PostDetail() {
         </div>
 
         <div style={{ marginTop: '60px', display: 'flex', justifyContent: 'center' }}>
-          <button 
+          {/* 추천은 1인 1회다. 서버가 준 liked 를 반영하지 않으면 이미 추천한 글에서도 버튼이
+              눌리고, 정상 동작인 거절(409)을 오류 팝업으로 보여주게 된다. */}
+          <button
             onClick={handleLike}
-            style={{ 
+            disabled={post.liked}
+            title={post.liked ? '이미 추천한 게시글입니다' : ''}
+            style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
-              padding: '20px 48px', borderRadius: '100px', border: '1px solid #4CAF4F', 
-              backgroundColor: '#fff', color: '#4CAF4F', cursor: 'pointer', fontWeight: 'bold',
+              padding: '20px 48px', borderRadius: '100px', border: '1px solid #4CAF4F',
+              backgroundColor: post.liked ? '#4CAF4F' : '#fff', color: post.liked ? '#fff' : '#4CAF4F',
+              cursor: post.liked ? 'default' : 'pointer', fontWeight: 'bold',
               transition: '0.2s'
             }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = '#e8f5e9'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = '#fff'}
+            onMouseEnter={e => { if (!post.liked) e.currentTarget.style.backgroundColor = '#e8f5e9' }}
+            onMouseLeave={e => { if (!post.liked) e.currentTarget.style.backgroundColor = '#fff' }}
           >
             <span style={{ fontSize: '28px' }}>👍</span>
-            <span style={{ fontSize: '16px' }}>추천 {post.likes}</span>
+            <span style={{ fontSize: '16px' }}>{post.liked ? '추천함' : '추천'} {post.likes}</span>
           </button>
         </div>
       </div>
 
       <div style={{ backgroundColor: '#fff', borderRadius: '24px', padding: '48px', boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
-        <h3 style={{ fontSize: '20px', marginBottom: '32px', fontWeight: 'bold' }}>댓글 {post.comments?.length || 0}</h3>
+        {/* 대댓글도 댓글이다 — 최상위만 세면 실제 개수와 어긋난다 */}
+        <h3 style={{ fontSize: '20px', marginBottom: '32px', fontWeight: 'bold' }}>
+          댓글 {(post.comments ?? []).reduce((n, c) => n + 1 + (c.replies?.length ?? 0), 0)}
+        </h3>
         
         {/* 새 댓글 작성 영역 */}
         <div style={{ marginBottom: '48px', display: 'flex', flexDirection: 'column', gap: '16px', borderBottom: '1px solid #eee', paddingBottom: '32px' }}>

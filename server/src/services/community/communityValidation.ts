@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// 커뮤니티 입력 검증 — DB 와 무관한 순수 함수 (src/test/security/communityValidation.test.ts)
+// 커뮤니티 입력 검증 — DB 와 무관한 순수 함수 (검증: src/test/security/communitySecurity.test.ts)
 //
 // 이미지: 화면은 FileReader 로 만든 data URL 을 보낸다. 별도 파일 저장소 없이 DB 에 담으므로
 //   · 형식은 png·jpeg·gif·webp 만 — SVG 는 스크립트를 품을 수 있어 받지 않는다
@@ -7,6 +7,11 @@
 //   · 디코딩 크기 1MB 이하
 // 텍스트: 길이 상한만 둔다. 화면(React)이 텍스트로만 출력하므로 HTML 이스케이프는 하지 않는다.
 // ─────────────────────────────────────────────────────────────
+
+// 공격 정황인 거부에만 threat 를 달아 컨트롤러가 anomaly_logs 에 남긴다. 제목 길이 초과처럼
+// 정상 사용자가 흔히 내는 입력 실수에는 달지 않는다 — 달면 오탐이 집계를 오염시킨다.
+// 타입만 가져온다(런타임 의존 없음) — 이 파일은 DB·모델을 불러오지 않아야 단독으로 돈다.
+import type { CommunityThreat } from './communityAbuseService'
 
 export const COMMUNITY_POLICY = {
   CATEGORIES: ['질문', '뉴스'] as readonly string[],
@@ -17,7 +22,14 @@ export const COMMUNITY_POLICY = {
 } as const
 
 export class CommunityError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    /** 공격 정황이면 종류. 일반 입력 실수에는 넣지 않는다. */
+    public threat?: CommunityThreat,
+    /** 기록용 부가 정보 — 사용자 입력 원문은 넣지 않는다(로그 주입 방지). */
+    public info?: string,
+  ) {
     super(message)
   }
 }
@@ -39,7 +51,9 @@ export interface DecodedImage {
 /** data URL 을 검증·디코딩한다. 형식이 틀리면 CommunityError(400). */
 export function decodeImage(dataUrl: string): DecodedImage {
   const m = DATA_URL.exec(dataUrl)
-  if (!m) throw new CommunityError(400, '이미지는 png·jpeg·gif·webp 형식만 첨부할 수 있습니다')
+  if (!m)
+    throw new CommunityError(400, '이미지는 png·jpeg·gif·webp 형식만 첨부할 수 있습니다',
+      'IMAGE_FORGERY', '허용 형식 외(data URL 헤더 비일치)')
   const [, mime, b64] = m
   // base64 길이로 먼저 상한을 본다 — 거대한 문자열을 디코딩하기 전에 거른다
   if (Math.floor((b64.length * 3) / 4) > COMMUNITY_POLICY.IMAGE_MAX_BYTES + 2)
@@ -47,8 +61,10 @@ export function decodeImage(dataUrl: string): DecodedImage {
   const data = Buffer.from(b64, 'base64')
   if (data.length > COMMUNITY_POLICY.IMAGE_MAX_BYTES)
     throw new CommunityError(400, '이미지는 1MB 이하만 첨부할 수 있습니다')
+  // 크기 초과는 공격으로 세지 않는다(큰 사진을 올린 정상 사용자). 시그니처 불일치만 위장 시도다.
   if (!IMAGE_SIGNATURES[mime](data))
-    throw new CommunityError(400, '이미지 파일 형식이 올바르지 않습니다')
+    throw new CommunityError(400, '이미지 파일 형식이 올바르지 않습니다',
+      'IMAGE_FORGERY', `시그니처 불일치(선언=${mime}, ${data.length}B)`)
   return { mime, data }
 }
 

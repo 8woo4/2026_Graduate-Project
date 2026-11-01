@@ -97,13 +97,28 @@ export default function VirtualPortfolio() {
   
   const socketRef = useRef<Socket | null>(null)
 
-  const fetchPortfolio = useCallback(async () => {
-    try {
+  // retryOn404: 계좌를 막 개설한 직후에만 켠다. 그 순간의 404 를 곧바로 '계좌 없음' 으로
+  // 받으면 방금 만든 계좌를 두고 개설 화면으로 되돌아가 재개설을 유도하게 된다.
+  const fetchPortfolio = useCallback(async (retryOn404 = false) => {
+    const load = async () => {
       const res = await axios.get(`${API_BASE}/api/trade/virtual/portfolio`, { withCredentials: true })
       setPortfolio(res.data)
       setNoAccount(false)
+    }
+    try {
+      await load()
     } catch (err: any) {
-      if (err.response?.status === 404) setNoAccount(true)
+      if (err.response?.status !== 404) return
+      if (!retryOn404) {
+        setNoAccount(true)
+        return
+      }
+      await new Promise(resolve => setTimeout(resolve, 800))
+      try {
+        await load()
+      } catch {
+        setNoAccount(true)
+      }
     } finally {
       setLoading(false)
     }
@@ -247,10 +262,26 @@ export default function VirtualPortfolio() {
         setPinPadKey(k => k + 1)
         setPinError('')
       } catch (err: any) {
-        setPinError(err.response?.data?.message ?? '오류가 발생했습니다')
         setTempPin('')
-        setPinFlow('set1')
-        setPinPadKey(k => k + 1)
+
+        // 서버에 PIN 이 이미 있다 = 앞선 설정이 성공한 것이다. 설정 단계로 되돌리면
+        // 서버는 계속 PIN_ALREADY_SET 으로 거절하므로 1/2 ↔ 2/2 를 영원히 반복하게 된다.
+        if (err.response?.data?.code === 'PIN_ALREADY_SET') {
+          setPinError('')
+          setPinFlow('open')
+          setPinPadKey(k => k + 1)
+          return
+        }
+
+        setPinError(err.response?.data?.message ?? '오류가 발생했습니다')
+        // 400(입력 문제)만 재설정으로 되돌린다. 401·403(세션·서명 만료)은 다시 입력해도
+        // 같은 거절이 나므로 흐름을 닫고 사유만 남긴다.
+        if (err.response?.status === 400) {
+          setPinFlow('set1')
+          setPinPadKey(k => k + 1)
+        } else {
+          setPinFlow(null)
+        }
       } finally {
         setWorking(false)
       }
@@ -261,10 +292,26 @@ export default function VirtualPortfolio() {
         setPinFlow(null)
         setPinError('')
         setLoading(true)
-        fetchPortfolio()
+        fetchPortfolio(true)
       } catch (err: any) {
-        setPinError(err.response?.data?.message ?? '계좌 개설에 실패했습니다')
-        setPinPadKey(k => k + 1)
+        const code = err.response?.data?.code
+        const message = err.response?.data?.message ?? '계좌 개설에 실패했습니다'
+
+        // 서버에 계좌가 이미 있다 = 앞선 요청이 사실 성공한 것이다(응답만 못 받은 경우 포함).
+        // 이것을 실패로 처리하면 이미 만들어진 계좌를 앞에 두고 PIN 입력만 반복하게 된다.
+        if (code === 'ACCOUNT_EXISTS') {
+          setPinFlow(null)
+          setPinError('')
+          setLoading(true)
+          fetchPortfolio(true)
+          return
+        }
+
+        setPinError(message)
+        // 다시 입력하면 풀리는 실패(PIN 오입력)만 키패드를 다시 띄운다. 잠금·세션 만료처럼
+        // 재입력으로 풀리지 않는 실패에서 키패드를 유지하면 같은 거절만 무한히 반복된다.
+        if (message.startsWith('PIN이 올바르지 않습니다')) setPinPadKey(k => k + 1)
+        else setPinFlow(null)
       } finally {
         setWorking(false)
       }

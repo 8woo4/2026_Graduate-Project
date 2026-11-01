@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { communityApi, formatDate, imageSrc, type CommunityPost } from '../utils/communityApi'
 
+// '인기글' 은 카테고리가 아니라 기준선이다. 탭을 카테고리로만 비교해 이 탭은 항상 비어 있었다.
+const POPULAR_MIN_LIKES = 10
+
 export default function Community() {
   const navigate = useNavigate();
 
@@ -35,13 +38,18 @@ export default function Community() {
   };
 
   const filteredPosts = postList.filter(post => {
-    const matchesTab = activeTab === '전체' || post.category === activeTab;
+    const matchesTab =
+      activeTab === '전체' ? true
+      : activeTab === '인기글' ? post.likes >= POPULAR_MIN_LIKES
+      : post.category === activeTab;
     const matchesSearch = post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           post.author.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesTab && matchesSearch;
   });
 
   const sortedPosts = [...filteredPosts].sort((a, b) => {
+    // 인기글 탭은 정렬을 추천순으로 고정한다 — 탭 자체가 추천을 기준으로 모은 목록이다
+    if (activeTab === '인기글') return b.likes - a.likes;
     if (activeFilter === '최신순') return new Date(b.date).getTime() - new Date(a.date).getTime();
     if (activeFilter === '조회순') return b.views - a.views;
     if (activeFilter === '추천순') return b.likes - a.likes;
@@ -79,7 +87,11 @@ export default function Community() {
         {isLoading ? (
           <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>데이터를 불러오는 중입니다...</div>
         ) : displayedPosts.length === 0 ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>게시글이 없습니다. 첫 글을 작성해보세요!</div>
+          <div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>
+            {activeTab === '인기글'
+              ? `추천 ${POPULAR_MIN_LIKES}회 이상 받은 글이 아직 없습니다.`
+              : '게시글이 없습니다. 첫 글을 작성해보세요!'}
+          </div>
         ) : (
           displayedPosts.map((post) => (
             <div key={post.id} onClick={() => navigate(`/community/${post.id}`)} style={{ display: 'grid', gridTemplateColumns: '1fr 120px 150px 70px 70px', padding: '16px 24px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', alignItems: 'center' }}>

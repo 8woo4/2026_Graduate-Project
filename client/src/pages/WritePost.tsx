@@ -2,7 +2,7 @@ import { useState, useEffect, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { API_BASE } from '../utils/api'
-import { communityApi } from '../utils/communityApi'
+import { communityApi, readImageFile } from '../utils/communityApi'
 
 export default function WritePost() {
   const navigate = useNavigate();
@@ -36,12 +36,16 @@ export default function WritePost() {
     fetchNickname();
   }, []);
 
-  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setImage(reader.result as string);
-      reader.readAsDataURL(file);
+  const handleImageChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const input = e.target;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      setImage(await readImageFile(file));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '사진을 첨부하지 못했습니다');
+      input.value = '';
+      setImage('');
     }
   };
 

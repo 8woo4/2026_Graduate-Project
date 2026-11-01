@@ -40,6 +40,7 @@ const TYPE_META: Record<string, { label: string; color: string }> = {
   BEHAVIOR_BIOMETRIC_MISMATCH: { label: '행동 생체인식 불일치(관측)', color: '#4a148c' },
   DEVICE_FINGERPRINT_MISMATCH: { label: '디바이스 지문 변화(관측)', color: '#311b92' },
   PRIVILEGE_ESCALATION: { label: '권한 상승 시도', color: '#d50000' },
+  COMMUNITY_ABUSE:      { label: '커뮤니티 남용',   color: '#00838f' },
 }
 
 const ACTION_META: Record<string, { label: string; color: string }> = {
@@ -55,6 +56,7 @@ type Stats = {
   multiAccountDevices: number; multiAccountAlerts: number; multiAccountBlocked: number
   ledgerAnchored: number; ledgerTampering: number; ledgerOnChain: boolean
   escalationApi: number; escalationRoute: number
+  communityIdor: number; communityImage: number; communitySpam: number
 }
 // 서버(getAnomalyLogs)는 AnomalyLog 행을 통째로 내려준다 — user_id·user_agent 도 온다.
 // 타입에만 빠져 있어 허니팟 표에서 `(h as any).user_agent` 로 우회하고 있었다.
@@ -248,6 +250,14 @@ export default function AdminDashboard() {
               value: stats ? stats.escalationApi + stats.escalationRoute : '—',
               color: '#d50000', icon: '🛂',
               note: stats ? `관리자 API 거부 ${stats.escalationApi}건 · 화면 진입 ${stats.escalationRoute}건` : '',
+            },
+            {
+              label: '커뮤니티 남용',
+              value: stats ? stats.communityIdor + stats.communityImage + stats.communitySpam : '—',
+              color: '#00838f', icon: '💬',
+              note: stats
+                ? `남의 글 삭제 시도 ${stats.communityIdor}건 · 이미지 위장 ${stats.communityImage}건 · 도배 차단 ${stats.communitySpam}건`
+                : '',
             },
             { label: '잠긴 계정',    value: stats?.locked ?? '—', color: '#8e24aa', icon: '🔒', note: '' },
             { label: '차단된 IP',    value: stats?.blockedIPs ?? '—', color: '#fb8c00', icon: '🚫', note: '' },

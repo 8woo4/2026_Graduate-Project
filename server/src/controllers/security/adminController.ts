@@ -10,6 +10,7 @@ import LedgerAnchor from '../../models/trade/LedgerAnchor'
 import { accountDisplay, accountLoginKey } from '../../utils/loginIdentifier'
 import { isLedgerOnChain, isValidDayKey, verifyDay } from '../../services/web3/ledgerAnchorService'
 import { ESCALATION_DETAIL_PREFIX } from '../../services/auth/privilegeEscalationService'
+import { COMMUNITY_DETAIL_PREFIX } from '../../services/community/communityAbuseService'
 
 // 대시보드 요약 통계
 export async function getStats(req: Request, res: Response): Promise<void> {
@@ -18,7 +19,7 @@ export async function getStats(req: Request, res: Response): Promise<void> {
 
   const [total, today, locked, honeypotHits, integrityViolations, tradeAnomalies, tradeBlocked,
     multiAccountDevices, multiAccountAlerts, multiAccountBlocked, ledgerAnchored, ledgerTampering,
-    escalationApi, escalationRoute] =
+    escalationApi, escalationRoute, communityIdor, communityImage, communitySpam] =
     await Promise.all([
       AnomalyLog.count(),
       AnomalyLog.count({ where: { created_at: { [Op.gte]: todayStart } } }),
@@ -56,6 +57,17 @@ export async function getStats(req: Request, res: Response): Promise<void> {
       AnomalyLog.count({
         where: { anomaly_type: 'PRIVILEGE_ESCALATION', detail: { [Op.startsWith]: ESCALATION_DETAIL_PREFIX.CLIENT_ROUTE } },
       }).catch(() => 0),
+      // 커뮤니티 남용 — 종류별로 따로 센다. IDOR 은 서버가 user_id 로 판정한 것이라 위조 불가,
+      // 이미지 위장은 저장 전 거부, 도배는 리미터가 실제로 막은 건수다.
+      AnomalyLog.count({
+        where: { anomaly_type: 'COMMUNITY_ABUSE', detail: { [Op.startsWith]: COMMUNITY_DETAIL_PREFIX.IDOR } },
+      }).catch(() => 0),
+      AnomalyLog.count({
+        where: { anomaly_type: 'COMMUNITY_ABUSE', detail: { [Op.startsWith]: COMMUNITY_DETAIL_PREFIX.IMAGE_FORGERY } },
+      }).catch(() => 0),
+      AnomalyLog.count({
+        where: { anomaly_type: 'COMMUNITY_ABUSE', detail: { [Op.startsWith]: COMMUNITY_DETAIL_PREFIX.SPAM } },
+      }).catch(() => 0),
     ])
 
   res.json({
@@ -64,6 +76,7 @@ export async function getStats(req: Request, res: Response): Promise<void> {
     multiAccountDevices, multiAccountAlerts, multiAccountBlocked,
     ledgerAnchored, ledgerTampering, ledgerOnChain: isLedgerOnChain(),
     escalationApi, escalationRoute,
+    communityIdor, communityImage, communitySpam,
   })
 }
 
